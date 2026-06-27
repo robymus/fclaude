@@ -25,6 +25,21 @@ FCLAUDE_VM_MEM_GIB="8"
 FCLAUDE_VM_VCPU="6"
 FCLAUDE_DISK_SIZE="32G"
 
+# Guest CPU model. NOT host-passthrough: on AMD Zen4 (Ryzen 7040/8040 etc.)
+# passing the raw host CPU through causes guest memory corruption (random
+# multi-process segfaults / reserved-bit page faults, traced to AVX-512). A
+# KVM-validated named model without AVX-512 is stable; EPYC-Milan (Zen3) is the
+# closest such model and keeps AVX2. Change if your host can't define it
+# (`virsh domcapabilities | grep usable` lists supported models); 'host-model'
+# is a more portable—but on Zen4 still AVX-512-exposing—alternative.
+FCLAUDE_VM_CPU_MODEL="EPYC-Milan"
+
+# Primary NIC MTU. A conservative floor (< 1500) so the VM advertises a small
+# TCP MSS and tolerates host-side tunnels (e.g. WireGuard ~1420) without
+# black-holing large responses via PMTU-discovery failure across the NAT.
+# Baked into the cloud-init network config so it applies from first boot.
+FCLAUDE_VM_MTU="1400"
+
 # --- Guest image ---
 FCLAUDE_CLOUD_IMG_URL="https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-amd64.img"
 
@@ -47,3 +62,12 @@ FCLAUDE_LIB_DIR="${HOME}/.local/lib/fclaude"
 # --- VM-side paths ---
 FCLAUDE_VM_HOME="/home/fclaude"
 FCLAUDE_VM_ANSIBLE_DIR="/var/lib/fclaude/ansible"
+
+# --- llm.log proxy integration (optional) ---
+# llm.log runs on the host, listening on host loopback only. When its CA certs
+# exist at $FCLAUDE_LLMLOG_HOST_DIR, install.sh copies them into the VM and sets
+# the proxy/CA env vars, and the wrappers remote-forward this port guest->host.
+# Set FCLAUDE_LLMLOG_PORT="" to disable the integration entirely.
+FCLAUDE_LLMLOG_PORT="9922"
+FCLAUDE_LLMLOG_HOST_DIR="${HOME}/.llm.log"
+FCLAUDE_LLMLOG_VM_DIR="${FCLAUDE_VM_HOME}/.llm.log"

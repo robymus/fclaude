@@ -1,0 +1,15 @@
+# cloud-init NoCloud network configuration (netplan v2).
+# Mirrors cloud-init's default DHCP setup for the pinned NIC, but adds a
+# conservative MTU so the VM tolerates host-side tunnels (e.g. WireGuard) without
+# black-holing large responses. cloud-init renders this to
+# /etc/netplan/50-cloud-init.yaml at first boot, so the MTU is active before any
+# provisioning download — and there is no second netplan file to merge/conflict.
+version: 2
+ethernets:
+  enp1s0:
+    match:
+      macaddress: "__FCLAUDE_VM_MAC__"
+    set-name: "enp1s0"
+    dhcp4: true
+    dhcp6: true
+    mtu: __FCLAUDE_VM_MTU__

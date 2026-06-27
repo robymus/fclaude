@@ -68,18 +68,37 @@ _ssh_opts() {
 # Run a command in the VM, no PTY (for scripted/stdio use).
 # The command string is intentionally assembled on the client and run by the
 # VM's shell, so client-side expansion (SC2029) is the desired behaviour.
+#
+# `-n` redirects this ssh's stdin from /dev/null. This is critical: helper calls
+# (mount/unmount/start probes) run while the wrapper has inherited the caller's
+# stdin. Without -n, an ssh_vm command would consume bytes the caller still needs
+# — e.g. the VS Code extension's stdio control handshake — and the real claude
+# ssh would then hang waiting for input that was already swallowed.
 ssh_vm() {
   local -a opts=()
   mapfile -d '' -t opts < <(_ssh_opts)
   # shellcheck disable=SC2029
-  ssh "${opts[@]}" "${SSH_USER}@${VM_IP}" "$@"
+  ssh -n "${opts[@]}" "${SSH_USER}@${VM_IP}" "$@"
+}
+
+# Remote-forward args so the guest can reach the host's llm.log proxy at
+# 127.0.0.1:$LLMLOG_PROXY_PORT (the proxy binds host loopback only, so the guest
+# can't reach it over the NAT — we tunnel it back through the ssh session).
+# Emits nothing when LLMLOG_PROXY_PORT is unset, so the feature is opt-in.
+# A bind failure (e.g. the port is already forwarded by a concurrent session) is
+# non-fatal: ssh warns and continues, and the existing forward keeps serving the
+# shared guest loopback.
+_llmlog_fwd() {
+  [[ -n "${LLMLOG_PROXY_PORT:-}" ]] || return 0
+  printf '%s\0' -R "127.0.0.1:${LLMLOG_PROXY_PORT}:127.0.0.1:${LLMLOG_PROXY_PORT}"
 }
 
 # Run a command in the VM with a PTY (for interactive claude / shells).
 ssh_vm_tty() {
-  local -a opts=()
+  local -a opts=() fwd=()
   mapfile -d '' -t opts < <(_ssh_opts)
-  ssh -t "${opts[@]}" "${SSH_USER}@${VM_IP}" "$@"
+  mapfile -d '' -t fwd < <(_llmlog_fwd)
+  ssh -t "${opts[@]}" "${fwd[@]}" "${SSH_USER}@${VM_IP}" "$@"
 }
 
 # Run a command in the VM as the maintenance user (interactive).

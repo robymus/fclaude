@@ -84,9 +84,11 @@ only after that address exists.
 | File | Role |
 |---|---|
 | `cloud-init/meta-data.tmpl` | instance-id + hostname. |
-| `cloud-init/user-data.tmpl` | First boot: create `fclaude` (uid 1000, sudo NOPASSWD) + `maint` users, inject pubkeys, growpart/resize, install `ansible`+`git`, drop the playbook via `write_files` (base64), run it locally. |
-| `ansible/site.yml` | In-VM provisioning: base tools, **Docker** (get.docker.com, fclaude in docker group), Node 22 + `@anthropic-ai/claude-code`, headless-chrome runtime libs (no browser), `/home/fclaude` ownership. Shipped base64-embedded in the seed. |
-| `libvirt/domain.xml.tmpl` | KVM domain: 8 GiB / 6 vCPU, q35, host-passthrough, raw vda (cache=none, discard=unmap), seed cdrom, virtio NIC with fixed MAC, guest agent, virtio-rng. |
+| `cloud-init/user-data.tmpl` | First boot: create `fclaude` (uid 1000, sudo NOPASSWD) + `maint` users, inject pubkeys, growpart/resize, install `ansible`+`git`, drop the playbook via `write_files` (base64), run it locally (`-e host_user=<USER>`). |
+| `cloud-init/network-config.tmpl` | NoCloud netplan v2 (rendered into 50-cloud-init.yaml at first boot via `cloud-localds -N`): DHCP on the pinned NIC **plus a conservative `mtu` (`FCLAUDE_VM_MTU`, default 1400)** so the VM tolerates host-side tunnels (e.g. WireGuard ~1420) without black-holing large TLS responses. Baked into the primary file — **never** a second netplan drop-in (a second file re-declaring the interface conflicts with `match`/`set-name`), and **never** applied live with `netplan apply` over ssh (that disrupts the running NIC and needs a reboot to recover). |
+| `ansible/site.yml` | In-VM provisioning (runs IN the VM, `-c local`): base tools, **Docker** (get.docker.com, fclaude in docker group), Node 22 + `@anthropic-ai/claude-code`, headless-chrome runtime libs (no browser), `/home/fclaude` ownership, host-home bind mount. Shipped base64-embedded in the seed. |
+| `ansible/llmlog.yml` | **Host-run** playbook (control node = host, VM over ssh) for the optional llm.log integration: `ansible.builtin.copy` pushes the host's CA certs into the VM and `blockinfile` sets the proxy/CA env vars in `/etc/environment`. Run from the host (not in-VM) so `copy` can read the host's `~/.llm.log`. install.sh invokes it last (step 14), gated on host certs + `ansible-playbook`. NB: pass ssh `-o` opts in **attached** form (`-oKey=val`) — ansible-core 2.19 argparse-crashes on the space-separated form. |
+| `libvirt/domain.xml.tmpl` | KVM domain: 8 GiB / 6 vCPU, q35, **named CPU model `FCLAUDE_VM_CPU_MODEL` (EPYC-Milan) — NOT host-passthrough** (raw Zen4 passthrough corrupts guest memory; see below), raw vda (cache=none, discard=unmap), seed cdrom, virtio NIC with fixed MAC, guest agent, virtio-rng. |
 
 ## Runtime state (created on the host by install, never in the repo)
 `~/.fclaude/`: `fclaude-disk` (32G raw ext4 VM disk), `seed.iso`, `config`, `vm` (identity),
@@ -104,6 +106,22 @@ only after that address exists.
   propagates each per-session NFS mount through the bind automatically. Set up idempotently in
   `vm/ansible/site.yml` (host login passed from cloud-init as `-e host_user=<USER>`). The
   `fclaude-vscode` wrapper `cd`s into the host absolute path so paths round-trip to the editor.
+- **Conservative NIC MTU (1400)** — baked into the cloud-init network config so the VM advertises a
+  small TCP MSS and survives host tunnels (WireGuard etc.) that would otherwise PMTU-blackhole large
+  responses (symptom: `claude` hangs at startup, big fetches time out). Set it once at the netplan
+  source; do not add a second netplan file or run a live `netplan apply`. (`vm/cloud-init/network-config.tmpl`, `FCLAUDE_VM_MTU`)
+- **Named CPU model, not `host-passthrough`** — passing this AMD Zen4 (Ryzen 7840HS) laptop CPU
+  through raw caused guest-wide memory corruption: reserved-bit page faults and random
+  multi-process SIGSEGV (incl. PID 1), VM dying every few minutes. Traced to an AVX-512/Zen4 path
+  miscomputing under KVM; a KVM-validated model without AVX-512 (`EPYC-Milan`) ran 80+ min clean.
+  (`FCLAUDE_VM_CPU_MODEL`, `vm/libvirt/domain.xml.tmpl`)
+- **Optional llm.log proxy** — route claude's API traffic in the VM through the host's llm.log
+  (an HTTPS-logging MITM proxy bound to host loopback). Set `LLMLOG_PROXY_PORT` (config) → the
+  wrappers `ssh -R 127.0.0.1:<port>:127.0.0.1:<port>` so the guest reaches the host-only proxy;
+  `install.sh` step 14 (host-run `llmlog.yml`) installs the CA into the VM and sets the proxy/CA
+  env vars in `/etc/environment` (picked up by pam_env for the wrapper's non-interactive ssh exec).
+  The cert paths use the host-home path, which resolves via the bind mount. (`lib/common.sh`
+  `_llmlog_fwd`, `vm/ansible/llmlog.yml`)
 - **Reference counting** (flock + counter files) so CLI and VS Code sessions on the same dir coexist; unmount only on last exit. (`lib/common.sh`)
 - **Single source of truth** — all IPs/paths/names in `lib/constants.sh`; everything else is templated.
 

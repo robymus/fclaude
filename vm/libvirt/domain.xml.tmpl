@@ -12,7 +12,11 @@
     <acpi/>
     <apic/>
   </features>
-  <cpu mode='host-passthrough' check='none' migratable='off'/>
+  <!-- Named CPU model, NOT host-passthrough: on AMD Zen4 (and similar new parts)
+       passing the raw host CPU through corrupts the guest (random multi-process
+       segfaults / reserved-bit page faults, traced to AVX-512). A KVM-validated
+       named model (default EPYC-Milan, no AVX-512) is stable. See FCLAUDE_VM_CPU_MODEL. -->
+  <cpu mode='custom' match='exact' check='none'><model fallback='allow'>__FCLAUDE_VM_CPU_MODEL__</model></cpu>
   <clock offset='utc'>
     <timer name='rtc' tickpolicy='catchup'/>
     <timer name='pit' tickpolicy='delay'/>

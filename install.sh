@@ -31,7 +31,7 @@ render() {
 }
 
 # ===========================================================================
-step "1/13  Pre-flight checks"
+step "1/14Pre-flight checks"
 [[ "$(id -u)" -ne 0 ]] || die "run as your normal user (not root); the script uses sudo where needed"
 [[ -e /dev/kvm ]] || die "/dev/kvm not present — KVM/virtualization unavailable"
 command -v sudo >/dev/null || die "sudo is required"
@@ -41,7 +41,7 @@ avail_kib="$(df --output=avail -k "$HOME" | tail -1 | tr -d ' ')"
 info "host looks suitable for KVM."
 
 # ===========================================================================
-step "2/13  Install host packages"
+step "2/14Install host packages"
 PKGS=(qemu-system-x86 qemu-utils libvirt-daemon-system libvirt-clients
       genisoimage nftables nfs-kernel-server cloud-image-utils)
 missing=()
@@ -66,13 +66,13 @@ for g in libvirt kvm; do
 done
 
 # ===========================================================================
-step "3/13  Create state directories"
+step "3/14Create state directories"
 mkdir -p "$FCLAUDE_HOME" "$FCLAUDE_EXPORTS_ROOT" "$FCLAUDE_REFCOUNT_DIR" \
          "$FCLAUDE_SSH_DIR" "$FCLAUDE_BIN_DIR" "$FCLAUDE_LIB_DIR"
 chmod 700 "$FCLAUDE_SSH_DIR"
 
 # ===========================================================================
-step "4/13  Virtual disk"
+step "4/14Virtual disk"
 if [[ -e "$FCLAUDE_DISK" ]]; then
   warn "disk already exists: $FCLAUDE_DISK"
   read -rp "Is this a RESTORE from backup? Continue setup WITHOUT touching the disk? [y/N] " a
@@ -90,7 +90,7 @@ else
 fi
 
 # ===========================================================================
-step "5/13  SSH keys"
+step "5/14SSH keys"
 [[ -f "$FCLAUDE_SSH_KEY" ]]      || ssh-keygen -t ed25519 -N '' -C fclaude      -f "$FCLAUDE_SSH_KEY"      >/dev/null
 [[ -f "$FCLAUDE_SSH_KEY_MAINT" ]] || ssh-keygen -t ed25519 -N '' -C fclaude-maint -f "$FCLAUDE_SSH_KEY_MAINT" >/dev/null
 FCLAUDE_PUBKEY="$(cat "${FCLAUDE_SSH_KEY}.pub")"
@@ -104,26 +104,29 @@ RENDER_VARS=(
   HOME FCLAUDE_DISK FCLAUDE_SEED FCLAUDE_HOME FCLAUDE_EXPORTS_ROOT FCLAUDE_REFCOUNT_DIR
   FCLAUDE_SSH_KEY FCLAUDE_SSH_KEY_MAINT FCLAUDE_VM_NAME FCLAUDE_VM_UUID FCLAUDE_VM_USER FCLAUDE_VM_UID
   FCLAUDE_MAINT_USER FCLAUDE_VM_IP FCLAUDE_HOST_IP FCLAUDE_VM_MAC FCLAUDE_VM_MEM_GIB
-  FCLAUDE_VM_VCPU FCLAUDE_LIBVIRT_NET FCLAUDE_VM_HOME FCLAUDE_VM_ANSIBLE_DIR
-  FCLAUDE_SUBNET_CIDR FCLAUDE_PUBKEY MAINT_PUBKEY ANSIBLE_SITE_B64 USER
+  FCLAUDE_VM_VCPU FCLAUDE_VM_MTU FCLAUDE_VM_CPU_MODEL FCLAUDE_LIBVIRT_NET FCLAUDE_VM_HOME
+  FCLAUDE_VM_ANSIBLE_DIR FCLAUDE_SUBNET_CIDR FCLAUDE_PUBKEY MAINT_PUBKEY ANSIBLE_SITE_B64
+  USER FCLAUDE_LLMLOG_PORT
 )
 
 # ===========================================================================
-step "6/13  Build cloud-init seed"
+step "6/14Build cloud-init seed"
 seeddir="$(mktemp -d)"
 render "${REPO_DIR}/vm/cloud-init/meta-data.tmpl" "${seeddir}/meta-data"
 render "${REPO_DIR}/vm/cloud-init/user-data.tmpl" "${seeddir}/user-data"
+render "${REPO_DIR}/vm/cloud-init/network-config.tmpl" "${seeddir}/network-config"
 if command -v cloud-localds >/dev/null 2>&1; then
-  cloud-localds "$FCLAUDE_SEED" "${seeddir}/user-data" "${seeddir}/meta-data"
+  cloud-localds --network-config "${seeddir}/network-config" \
+    "$FCLAUDE_SEED" "${seeddir}/user-data" "${seeddir}/meta-data"
 else
   genisoimage -output "$FCLAUDE_SEED" -volid cidata -joliet -rock \
-    "${seeddir}/user-data" "${seeddir}/meta-data" >/dev/null 2>&1
+    "${seeddir}/user-data" "${seeddir}/meta-data" "${seeddir}/network-config" >/dev/null 2>&1
 fi
 rm -rf "$seeddir"
 info "seed image: $FCLAUDE_SEED"
 
 # ===========================================================================
-step "7/13  libvirt NAT network + DHCP reservation"
+step "7/14libvirt NAT network + DHCP reservation"
 if ! VIRSH net-info "$FCLAUDE_LIBVIRT_NET" >/dev/null 2>&1; then
   die "libvirt '$FCLAUDE_LIBVIRT_NET' network missing; expected with libvirt-daemon-system"
 fi
@@ -142,7 +145,7 @@ RENDER_VARS+=(FCLAUDE_BRIDGE)
 info "network bridge: $BRIDGE, VM pinned to $FCLAUDE_VM_IP"
 
 # ===========================================================================
-step "8/13  Define and start the VM"
+step "8/14Define and start the VM"
 
 # System libvirt runs qemu as 'libvirt-qemu' by default, which cannot traverse
 # your home directory to open ~/.fclaude/fclaude-disk. Run qemu as your user
@@ -187,7 +190,7 @@ fi
 info "VM started."
 
 # ===========================================================================
-step "9/13  NFS export root + firewall + sudoers (host config)"
+step "9/14NFS export root + firewall + sudoers (host config)"
 # NFS
 sudo install -d -m 755 /etc/nfs.conf.d /etc/exports.d
 tmpf="$(mktemp)"; render "${REPO_DIR}/host/nfs/fclaude.conf"        "$tmpf"; sudo install -m 644 "$tmpf" /etc/nfs.conf.d/fclaude.conf; rm -f "$tmpf"
@@ -232,7 +235,7 @@ sudo install -m 440 "$tmpf" /etc/sudoers.d/fclaude; rm -f "$tmpf"
 info "sudoers drop-in installed."
 
 # ===========================================================================
-step "10/13  systemd units (boot persistence)"
+step "10/14systemd units (boot persistence)"
 tmpf="$(mktemp)"; render "${REPO_DIR}/host/systemd/fclaude-exports.service" "$tmpf"
 sudo install -m 644 "$tmpf" /etc/systemd/system/fclaude-exports.service; rm -f "$tmpf"
 sudo install -m 644 "${REPO_DIR}/host/systemd/fclaude-firewall.service" /etc/systemd/system/fclaude-firewall.service
@@ -245,7 +248,7 @@ sudo systemctl enable fclaude-exports.service fclaude-firewall.service >/dev/nul
 info "boot-persistence units enabled."
 
 # ===========================================================================
-step "11/13  Install wrappers + library"
+step "11/14Install wrappers + library"
 install -m 644 "${REPO_DIR}/lib/common.sh"    "${FCLAUDE_LIB_DIR}/common.sh"
 install -m 644 "${REPO_DIR}/lib/constants.sh" "${FCLAUDE_LIB_DIR}/constants.sh"
 for w in fclaude fclaude-vscode fclaude-grow-disk; do
@@ -254,7 +257,7 @@ done
 info "wrappers installed to $FCLAUDE_BIN_DIR"
 
 # ===========================================================================
-step "12/13  Write config + VM info"
+step "12/14Write config + VM info"
 tmpf="$(mktemp)"; render "${REPO_DIR}/host/config.template" "$tmpf"
 if [[ -e "$FCLAUDE_CONFIG" ]]; then
   info "config exists; leaving it untouched (new template at ${FCLAUDE_CONFIG}.new)"
@@ -277,7 +280,7 @@ EOF
 info "wrote $FCLAUDE_CONFIG and $FCLAUDE_VM_INFO"
 
 # ===========================================================================
-step "13/13  Wait for VM provisioning (cloud-init + Ansible)"
+step "13/14Wait for VM provisioning (cloud-init + Ansible)"
 info "waiting for the VM to come up on ssh (this includes apt + Ansible; may take several minutes)..."
 deadline=$(( SECONDS + 900 ))
 SSH_OPTS=(-i "$FCLAUDE_SSH_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
@@ -289,6 +292,41 @@ until ssh "${SSH_OPTS[@]}" "${FCLAUDE_VM_USER}@${FCLAUDE_VM_IP}" \
 done
 ssh "${SSH_OPTS[@]}" "${FCLAUDE_VM_USER}@${FCLAUDE_VM_IP}" 'test -f /var/lib/fclaude/.provisioned' 2>/dev/null \
   && info "VM provisioned successfully." || true
+
+# ===========================================================================
+step "14/14  llm.log proxy integration (optional)"
+# If the host runs llm.log (an HTTPS-logging proxy bound to host loopback), route
+# claude in the VM through it. A HOST-RUN ansible playbook copies the CA certs
+# into the VM (ansible.builtin.copy reads them from the host's ~/.llm.log) and
+# sets the proxy/CA env vars; the matching guest->host port forward is set up
+# per-session by the wrappers (LLMLOG_PROXY_PORT in the config). Skipped when
+# llm.log certs or ansible-playbook are absent on the host.
+if [[ -n "${FCLAUDE_LLMLOG_PORT}" \
+      && -f "${FCLAUDE_LLMLOG_HOST_DIR}/ca.pem" \
+      && -f "${FCLAUDE_LLMLOG_HOST_DIR}/ca-bundle.pem" ]]; then
+  if command -v ansible-playbook >/dev/null 2>&1; then
+    info "installing llm.log CA + proxy env into the VM (host-run ansible)..."
+    # NB: attached -o form (no space). ansible-core 2.19 parses ssh_common_args
+    # with argparse and the space-separated '-o Foo=bar' form crashes the worker
+    # ("argument -o: expected one argument"); '-oFoo=bar' avoids it.
+    ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook \
+      -i "${FCLAUDE_VM_IP}," \
+      -u "${FCLAUDE_VM_USER}" \
+      --private-key "${FCLAUDE_SSH_KEY}" \
+      -e 'ansible_ssh_common_args=-oUserKnownHostsFile=/dev/null -oStrictHostKeyChecking=no' \
+      -e "llmlog_host_dir=${FCLAUDE_LLMLOG_HOST_DIR}" \
+      -e "llmlog_vm_dir=${FCLAUDE_LLMLOG_VM_DIR}" \
+      -e "llmlog_port=${FCLAUDE_LLMLOG_PORT}" \
+      -e "env_home=${HOME}" \
+      "${REPO_DIR}/vm/ansible/llmlog.yml" \
+      && info "llm.log integration installed." \
+      || warn "llm.log playbook failed; see ansible output above."
+  else
+    warn "ansible-playbook not on host; skipping llm.log integration (install ansible to enable)."
+  fi
+else
+  info "llm.log not detected on host (${FCLAUDE_LLMLOG_HOST_DIR}); skipping proxy integration."
+fi
 
 # ===========================================================================
 printf '\n\033[1;32mfclaude install complete.\033[0m\n'
