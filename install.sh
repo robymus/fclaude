@@ -106,8 +106,15 @@ RENDER_VARS=(
   FCLAUDE_MAINT_USER FCLAUDE_VM_IP FCLAUDE_HOST_IP FCLAUDE_VM_MAC FCLAUDE_VM_MEM_GIB
   FCLAUDE_VM_VCPU FCLAUDE_VM_MTU FCLAUDE_VM_CPU_MODEL FCLAUDE_LIBVIRT_NET FCLAUDE_VM_HOME
   FCLAUDE_VM_ANSIBLE_DIR FCLAUDE_SUBNET_CIDR FCLAUDE_PUBKEY MAINT_PUBKEY ANSIBLE_SITE_B64
-  USER FCLAUDE_LLMLOG_PORT
+  USER FCLAUDE_LLMLOG_PORT FCLAUDE_SOCKET_PROXYD
 )
+
+# Locate systemd-socket-proxyd for the llm.log gateway bridge (path varies with
+# usrmerge). Empty if absent — the bridge step below is then skipped.
+FCLAUDE_SOCKET_PROXYD=""
+for _p in /usr/lib/systemd/systemd-socket-proxyd /lib/systemd/systemd-socket-proxyd; do
+  [[ -x "$_p" ]] && { FCLAUDE_SOCKET_PROXYD="$_p"; break; }
+done
 
 # ===========================================================================
 step "6/14Build cloud-init seed"
@@ -243,8 +250,25 @@ sudo install -m 644 "${REPO_DIR}/host/systemd/fclaude-firewall.service" /etc/sys
 sudo install -d -m 755 /etc/systemd/system/nfs-server.service.d
 sudo install -m 644 "${REPO_DIR}/host/systemd/nfs-server-after-libvirt.conf" \
   /etc/systemd/system/nfs-server.service.d/fclaude.conf
+
+# llm.log gateway bridge: a socket-activated proxy on HOST_IP:PORT -> host
+# 127.0.0.1:PORT so the guest reaches llm.log over the NAT (no per-session ssh
+# -R). Only when the integration is enabled and systemd-socket-proxyd exists.
+if [[ -n "${FCLAUDE_LLMLOG_PORT}" && -n "${FCLAUDE_SOCKET_PROXYD}" ]]; then
+  tmpf="$(mktemp)"; render "${REPO_DIR}/host/systemd/fclaude-llmlog.socket" "$tmpf"
+  sudo install -m 644 "$tmpf" /etc/systemd/system/fclaude-llmlog.socket; rm -f "$tmpf"
+  tmpf="$(mktemp)"; render "${REPO_DIR}/host/systemd/fclaude-llmlog.service" "$tmpf"
+  sudo install -m 644 "$tmpf" /etc/systemd/system/fclaude-llmlog.service; rm -f "$tmpf"
+elif [[ -n "${FCLAUDE_LLMLOG_PORT}" ]]; then
+  warn "systemd-socket-proxyd not found; skipping llm.log gateway bridge."
+fi
+
 sudo systemctl daemon-reload
 sudo systemctl enable fclaude-exports.service fclaude-firewall.service >/dev/null 2>&1 || true
+if [[ -n "${FCLAUDE_LLMLOG_PORT}" && -n "${FCLAUDE_SOCKET_PROXYD}" ]]; then
+  sudo systemctl enable fclaude-llmlog.socket >/dev/null 2>&1 || true
+  sudo systemctl restart fclaude-llmlog.socket >/dev/null 2>&1 || true
+fi
 info "boot-persistence units enabled."
 
 # ===========================================================================
@@ -298,9 +322,9 @@ step "14/14  llm.log proxy integration (optional)"
 # If the host runs llm.log (an HTTPS-logging proxy bound to host loopback), route
 # claude in the VM through it. A HOST-RUN ansible playbook copies the CA certs
 # into the VM (ansible.builtin.copy reads them from the host's ~/.llm.log) and
-# sets the proxy/CA env vars; the matching guest->host port forward is set up
-# per-session by the wrappers (LLMLOG_PROXY_PORT in the config). Skipped when
-# llm.log certs or ansible-playbook are absent on the host.
+# sets the proxy/CA env vars pointing at the gateway bridge installed in step 10
+# (fclaude-llmlog.socket). Skipped when llm.log certs or ansible-playbook are
+# absent on the host.
 if [[ -n "${FCLAUDE_LLMLOG_PORT}" \
       && -f "${FCLAUDE_LLMLOG_HOST_DIR}/ca.pem" \
       && -f "${FCLAUDE_LLMLOG_HOST_DIR}/ca-bundle.pem" ]]; then
@@ -317,6 +341,7 @@ if [[ -n "${FCLAUDE_LLMLOG_PORT}" \
       -e "llmlog_host_dir=${FCLAUDE_LLMLOG_HOST_DIR}" \
       -e "llmlog_vm_dir=${FCLAUDE_LLMLOG_VM_DIR}" \
       -e "llmlog_port=${FCLAUDE_LLMLOG_PORT}" \
+      -e "llmlog_gateway=${FCLAUDE_HOST_IP}" \
       -e "env_home=${HOME}" \
       "${REPO_DIR}/vm/ansible/llmlog.yml" \
       && info "llm.log integration installed." \

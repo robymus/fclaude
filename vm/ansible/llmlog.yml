@@ -19,6 +19,9 @@
     llmlog_host_dir: "{{ lookup('env', 'HOME') }}/.llm.log"
     llmlog_vm_dir: /home/fclaude/.llm.log
     llmlog_port: "9922"
+    # Gateway address the guest uses to reach the host's llm.log bridge
+    # (fclaude-llmlog.socket forwards gateway:port -> host 127.0.0.1:port).
+    llmlog_gateway: "192.168.122.1"
     env_home: "{{ lookup('env', 'HOME') }}"
 
   tasks:
@@ -44,7 +47,9 @@
     # /etc/environment is read by pam_env, so these reach the wrapper-launched
     # claude (a non-interactive ssh exec, which does NOT source profile/bashrc).
     # Cert paths use the host-home path, which the VM bind-mounts onto
-    # /home/fclaude, so they match host paths.
+    # /home/fclaude, so they match host paths. The proxy points at the gateway
+    # bridge (not 127.0.0.1) so every session reaches llm.log over the NAT
+    # without a per-session ssh -R tunnel.
     - name: Set llm.log proxy + CA env vars in /etc/environment
       ansible.builtin.blockinfile:
         path: /etc/environment
@@ -54,5 +59,5 @@
           SSL_CERT_FILE={{ env_home }}/.llm.log/ca-bundle.pem
           REQUESTS_CA_BUNDLE={{ env_home }}/.llm.log/ca-bundle.pem
           CURL_CA_BUNDLE={{ env_home }}/.llm.log/ca-bundle.pem
-          HTTPS_PROXY=http://127.0.0.1:{{ llmlog_port }}
-          https_proxy=http://127.0.0.1:{{ llmlog_port }}
+          HTTPS_PROXY=http://{{ llmlog_gateway }}:{{ llmlog_port }}
+          https_proxy=http://{{ llmlog_gateway }}:{{ llmlog_port }}

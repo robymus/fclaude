@@ -64,9 +64,11 @@ FCLAUDE_VM_HOME="/home/fclaude"
 FCLAUDE_VM_ANSIBLE_DIR="/var/lib/fclaude/ansible"
 
 # --- llm.log proxy integration (optional) ---
-# llm.log runs on the host, listening on host loopback only. When its CA certs
-# exist at $FCLAUDE_LLMLOG_HOST_DIR, install.sh copies them into the VM and sets
-# the proxy/CA env vars, and the wrappers remote-forward this port guest->host.
+# llm.log runs on the host, listening on host loopback only (hard-coded). When
+# its CA certs exist at $FCLAUDE_LLMLOG_HOST_DIR, install.sh copies them into the
+# VM, installs a gateway bridge (fclaude-llmlog.socket: HOST_IP:port -> host
+# 127.0.0.1:port), and points the VM's HTTPS_PROXY at HOST_IP:port — so every
+# session reaches llm.log over the NAT without a per-session ssh -R tunnel.
 # Set FCLAUDE_LLMLOG_PORT="" to disable the integration entirely.
 FCLAUDE_LLMLOG_PORT="9922"
 FCLAUDE_LLMLOG_HOST_DIR="${HOME}/.llm.log"

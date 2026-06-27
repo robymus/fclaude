@@ -39,6 +39,7 @@ Host firewall (nftables table 'fclaude') blocks VM→host privileged ports (<102
 | `fclaude` | Main CLI. Flags: `--dir`, `--no-mount`, `-m/--maintenance`, `-s/--status`, `--shutdown`, `--`/passthrough. Passes `--dangerously-skip-permissions`. Mounts CWD, runs claude over ssh PTY, unmounts on EXIT trap. `--status` calls `fclaude_status` (in common.sh) — a best-effort report (state/IP/vCPU/mem/uptime/CPU/disk + guest mem/df + active workspace refcounts) that never starts the VM. |
 | `fclaude-vscode` | VS Code `claudeCode.claudeProcessWrapper`. Drops `argv[1]` (the extension's bundled claude path — byte-identical to the VM's native claude) and forwards the rest. Mounts CWD, then `cd`s into the **host absolute path** (resolvable in the VM via the `/home/<hostuser>` bind mount) so claude reports host-matching paths back to the editor. stdio (`ssh -T`), **no** skip-permissions flag (extension sets that). **Errors out** if CWD isn't under `$HOME`. |
 | `fclaude-grow-disk` | `qemu-img resize` → `virsh blockresize` → in-VM `growpart`+`resize2fs` (online ext4 grow). |
+| `fclaude-llmlog-setup` | **Standalone** sudo installer for the llm.log gateway bridge (renders+enables `fclaude-llmlog.{socket,service}` from the repo templates and repoints the VM's `/etc/environment` proxy). Run from a repo checkout to apply the bridge without a full `install.sh`. NOT installed to `~/.local/bin` (it reads the templates relative to itself). |
 
 ### `host/` config templates (rendered + installed by install.sh)
 | File | Installed to | Role |
@@ -51,6 +52,7 @@ Host firewall (nftables table 'fclaude') blocks VM→host privileged ports (<102
 | `systemd/fclaude-firewall.service` | `/etc/systemd/system/` | Re-applies nft table on boot (after libvirtd). |
 | `systemd/fclaude-exports.service` | `/etc/systemd/system/` | Recreates export root + `exportfs -r` on boot. |
 | `systemd/nfs-server-after-libvirt.conf` | `/etc/systemd/system/nfs-server.service.d/fclaude.conf` | Drop-in ordering nfs-server after the libvirt network so nfsd can bind to `192.168.122.1`. |
+| `systemd/fclaude-llmlog.{socket,service}` | `/etc/systemd/system/` | **llm.log gateway bridge.** Socket-activated `systemd-socket-proxyd` listening on `HOST_IP:port` (the NAT gateway, `FreeBind`) forwarding to host `127.0.0.1:port`. Lets the guest reach the loopback-only llm.log proxy over the NAT — replaces the old per-session `ssh -R`. Installed only when llm.log is enabled and `systemd-socket-proxyd` exists. Re-applied standalone by `host/bin/fclaude-llmlog-setup`. |
 
 ### qemu runs as the invoking user
 System libvirt runs qemu as `libvirt-qemu` by default, which **cannot traverse a `0700` home
@@ -116,12 +118,19 @@ only after that address exists.
   miscomputing under KVM; a KVM-validated model without AVX-512 (`EPYC-Milan`) ran 80+ min clean.
   (`FCLAUDE_VM_CPU_MODEL`, `vm/libvirt/domain.xml.tmpl`)
 - **Optional llm.log proxy** — route claude's API traffic in the VM through the host's llm.log
-  (an HTTPS-logging MITM proxy bound to host loopback). Set `LLMLOG_PROXY_PORT` (config) → the
-  wrappers `ssh -R 127.0.0.1:<port>:127.0.0.1:<port>` so the guest reaches the host-only proxy;
-  `install.sh` step 14 (host-run `llmlog.yml`) installs the CA into the VM and sets the proxy/CA
-  env vars in `/etc/environment` (picked up by pam_env for the wrapper's non-interactive ssh exec).
-  The cert paths use the host-home path, which resolves via the bind mount. (`lib/common.sh`
-  `_llmlog_fwd`, `vm/ansible/llmlog.yml`)
+  (an HTTPS-logging MITM proxy bound to host loopback, hard-coded to `127.0.0.1`). Set
+  `LLMLOG_PROXY_PORT` (config) → `install.sh` step 10 installs a **gateway bridge**
+  (`fclaude-llmlog.socket`, a socket-activated `systemd-socket-proxyd` on `HOST_IP:<port>` →
+  `127.0.0.1:<port>`) and step 14 (host-run `llmlog.yml`) installs the CA + sets the proxy/CA env
+  vars in `/etc/environment` with `HTTPS_PROXY=http://HOST_IP:<port>` (picked up by pam_env for the
+  wrapper's non-interactive ssh exec). The guest reaches the proxy over the NAT — no per-session
+  forward, so concurrent sessions don't collide. **Why not `ssh -R`** (the original approach): a
+  reverse forward installs a *single exclusive* listener in the VM, so a second concurrent session's
+  `-R` bind fails silently and — worse — when the listener's owning session exits, ssh blocks
+  waiting for the *other* session's still-open forwarded connections to drain (the "hang on exit").
+  The shared host bridge has none of these failure modes. Apply the bridge alone (no full install)
+  with `sudo ./host/bin/fclaude-llmlog-setup`. (`host/systemd/fclaude-llmlog.*`,
+  `host/bin/fclaude-llmlog-setup`, `vm/ansible/llmlog.yml`)
 - **Reference counting** (flock + counter files) so CLI and VS Code sessions on the same dir coexist; unmount only on last exit. (`lib/common.sh`)
 - **Single source of truth** — all IPs/paths/names in `lib/constants.sh`; everything else is templated.
 

@@ -81,24 +81,18 @@ ssh_vm() {
   ssh -n "${opts[@]}" "${SSH_USER}@${VM_IP}" "$@"
 }
 
-# Remote-forward args so the guest can reach the host's llm.log proxy at
-# 127.0.0.1:$LLMLOG_PROXY_PORT (the proxy binds host loopback only, so the guest
-# can't reach it over the NAT — we tunnel it back through the ssh session).
-# Emits nothing when LLMLOG_PROXY_PORT is unset, so the feature is opt-in.
-# A bind failure (e.g. the port is already forwarded by a concurrent session) is
-# non-fatal: ssh warns and continues, and the existing forward keeps serving the
-# shared guest loopback.
-_llmlog_fwd() {
-  [[ -n "${LLMLOG_PROXY_PORT:-}" ]] || return 0
-  printf '%s\0' -R "127.0.0.1:${LLMLOG_PROXY_PORT}:127.0.0.1:${LLMLOG_PROXY_PORT}"
-}
+# The guest reaches the host's llm.log proxy via the host-side gateway bridge
+# (fclaude-llmlog.socket: HOST_IP:port -> 127.0.0.1:port), so the VM just points
+# HTTPS_PROXY at HOST_IP and no per-session ssh forward is needed. (Earlier this
+# used `ssh -R`, but that installs a single exclusive listener in the VM:
+# concurrent sessions collide on the bind, and the listener's owner blocks on
+# exit waiting for the other session's forwarded connections to drain.)
 
 # Run a command in the VM with a PTY (for interactive claude / shells).
 ssh_vm_tty() {
-  local -a opts=() fwd=()
+  local -a opts=()
   mapfile -d '' -t opts < <(_ssh_opts)
-  mapfile -d '' -t fwd < <(_llmlog_fwd)
-  ssh -t "${opts[@]}" "${fwd[@]}" "${SSH_USER}@${VM_IP}" "$@"
+  ssh -t "${opts[@]}" "${SSH_USER}@${VM_IP}" "$@"
 }
 
 # Run a command in the VM as the maintenance user (interactive).
