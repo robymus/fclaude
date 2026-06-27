@@ -209,7 +209,12 @@ info "firewall rules applied."
 # table merely 'accept's (non-terminally). Open the VM subnet to host
 # unprivileged ports via ufw; <1024 stays denied by ufw default + our nft reject.
 if command -v ufw >/dev/null 2>&1 && sudo ufw status 2>/dev/null | grep -qi '^Status: active'; then
+  ufw_rules="$(sudo ufw status 2>/dev/null)"
   for proto in tcp udp; do
+    # Skip if an equivalent rule already exists (ufw does not dedupe).
+    if grep -q "${FCLAUDE_HOST_IP} 1024:65535/${proto} on ${BRIDGE}" <<<"$ufw_rules"; then
+      continue
+    fi
     sudo ufw allow in on "$BRIDGE" proto "$proto" \
       from "$FCLAUDE_SUBNET_CIDR" to "$FCLAUDE_HOST_IP" port 1024:65535 \
       comment 'fclaude' >/dev/null
