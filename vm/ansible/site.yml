@@ -108,3 +108,37 @@
         owner: "{{ fclaude_user }}"
         group: "{{ fclaude_user }}"
         mode: '0755'
+
+    # --- Host-path bind mount for seamless editor/CLI path matching ---
+    # Claude reports ABSOLUTE paths (resolved via getcwd) to the VS Code
+    # extension, which does no path translation. Workspaces are shared at
+    # /home/fclaude/<rel>, but the host knows those files as
+    # /home/{{ host_user }}/<rel>. A symlink would be canonicalized away by
+    # getcwd (back to /home/fclaude); a BIND MOUNT preserves the path so claude
+    # reports host-matching paths. The root mount is shared, so workspace NFS
+    # mounts made later under /home/fclaude propagate through this bind.
+    # Passed from cloud-init as `-e host_user=<host login>`; skipped when the
+    # host user is 'fclaude' (the bind would point at itself).
+    - name: Create host-home bind mountpoint
+      ansible.builtin.file:
+        path: "/home/{{ host_user }}"
+        state: directory
+        owner: "{{ fclaude_user }}"
+        group: "{{ fclaude_user }}"
+        mode: '0755'
+      when:
+        - host_user is defined
+        - host_user | length > 0
+        - host_user != fclaude_user
+
+    - name: Bind-mount /home/fclaude onto the host home path (persisted in fstab)
+      ansible.posix.mount:
+        path: "/home/{{ host_user }}"
+        src: /home/fclaude
+        fstype: none
+        opts: bind
+        state: mounted
+      when:
+        - host_user is defined
+        - host_user | length > 0
+        - host_user != fclaude_user

@@ -37,7 +37,7 @@ Host firewall (nftables table 'fclaude') blocks VM→host privileged ports (<102
 | File | Role |
 |---|---|
 | `fclaude` | Main CLI. Flags: `--dir`, `--no-mount`, `-m/--maintenance`, `-s/--status`, `--shutdown`, `--`/passthrough. Passes `--dangerously-skip-permissions`. Mounts CWD, runs claude over ssh PTY, unmounts on EXIT trap. `--status` calls `fclaude_status` (in common.sh) — a best-effort report (state/IP/vCPU/mem/uptime/CPU/disk + guest mem/df + active workspace refcounts) that never starts the VM. |
-| `fclaude-vscode` | VS Code `claudeCode.claudeProcessWrapper`. Same mount lifecycle but stdio (`ssh -T`) and **no** skip-permissions flag (extension sets that itself). |
+| `fclaude-vscode` | VS Code `claudeCode.claudeProcessWrapper`. Drops `argv[1]` (the extension's bundled claude path — byte-identical to the VM's native claude) and forwards the rest. Mounts CWD, then `cd`s into the **host absolute path** (resolvable in the VM via the `/home/<hostuser>` bind mount) so claude reports host-matching paths back to the editor. stdio (`ssh -T`), **no** skip-permissions flag (extension sets that). **Errors out** if CWD isn't under `$HOME`. |
 | `fclaude-grow-disk` | `qemu-img resize` → `virsh blockresize` → in-VM `growpart`+`resize2fs` (online ext4 grow). |
 
 ### `host/` config templates (rendered + installed by install.sh)
@@ -98,6 +98,12 @@ only after that address exists.
 - **NFSv4-only on 2049** so sharing survives the "<1024 blocked" firewall rule. (`host/nfs/`, plan §8–9)
 - **Bind-mount-into-export-root** — VM only sees per-session shared dirs, never all of `$HOME`. (`lib/common.sh` `_do_mount`, plan §9)
 - **uid 1000 ↔ 1000** — host `robymus` and VM `fclaude` share uid for transparent NFS ownership.
+- **Host-path bind mount** — the VM bind-mounts `/home/fclaude` onto `/home/<hostuser>` so claude's
+  getcwd-derived **absolute paths match the host** (a symlink would canonicalize back to
+  `/home/fclaude` and break VS Code file links; verified on the live VM). The `shared` root
+  propagates each per-session NFS mount through the bind automatically. Set up idempotently in
+  `vm/ansible/site.yml` (host login passed from cloud-init as `-e host_user=<USER>`). The
+  `fclaude-vscode` wrapper `cd`s into the host absolute path so paths round-trip to the editor.
 - **Reference counting** (flock + counter files) so CLI and VS Code sessions on the same dir coexist; unmount only on last exit. (`lib/common.sh`)
 - **Single source of truth** — all IPs/paths/names in `lib/constants.sh`; everything else is templated.
 
