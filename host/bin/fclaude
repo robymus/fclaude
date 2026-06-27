@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# fclaude — run Claude Code in yolo mode inside the sandbox VM (plan §10).
+#
+#   fclaude [options] [-- claude-args...]
+#
+# Default: ensure the VM is up, mount the current directory into the VM
+# (reference counted), run `claude --dangerously-skip-permissions` there, and
+# unmount on exit.
+set -euo pipefail
+
+FCLAUDE_LIB_DIR="${FCLAUDE_LIB_DIR:-$HOME/.local/lib/fclaude}"
+# shellcheck source=../../lib/common.sh
+source "${FCLAUDE_LIB_DIR}/common.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: fclaude [options] [-- claude-args...]
+
+Options:
+  --dir <path>       Mount and run in <path> instead of the current directory.
+  --no-mount         Run claude in the VM home with nothing mounted.
+  -m, --maintenance  Open an interactive shell in the VM as the maintenance user.
+  -s, --status       Print VM state, resources, and active workspaces (no start).
+  --shutdown         Power off the VM (asks for confirmation), then exit.
+  -h, --help         Show this help.
+
+Anything after `--` (or any unrecognized trailing args) is passed to claude.
+The target directory must be under your $HOME and is shared at the same relative
+path under /home/fclaude in the VM.
+EOF
+}
+
+DIR="$PWD"
+DO_MOUNT=1
+declare -a CLAUDE_ARGS=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dir)           DIR="${2:?--dir needs a path}"; shift 2 ;;
+    --no-mount)      DO_MOUNT=0; shift ;;
+    -m|--maintenance) MODE_MAINT=1; shift ;;
+    -s|--status)     MODE_STATUS=1; shift ;;
+    --shutdown)      MODE_SHUTDOWN=1; shift ;;
+    -h|--help)       usage; exit 0 ;;
+    --)              shift; CLAUDE_ARGS+=("$@"); break ;;
+    *)               CLAUDE_ARGS+=("$1"); shift ;;
+  esac
+done
+
+load_config
+
+# --- One-shot modes -------------------------------------------------------
+if [[ -n "${MODE_STATUS:-}" ]]; then
+  ( set +e; fclaude_status )
+  exit 0
+fi
+
+if [[ -n "${MODE_SHUTDOWN:-}" ]]; then
+  if [[ "$(vm_state)" != "running" ]]; then
+    info "VM $VM_NAME is not running."
+    exit 0
+  fi
+  read -rp "Shut down the fclaude VM '$VM_NAME'? [y/N] " ans
+  if [[ "$ans" == [yY] ]]; then
+    virsh shutdown "$VM_NAME" >/dev/null && info "shutdown signal sent."
+  else
+    info "cancelled."
+  fi
+  exit 0
+fi
+
+if [[ -n "${MODE_MAINT:-}" ]]; then
+  ensure_vm_running
+  ssh_maint
+  exit $?
+fi
+
+# --- Normal run -----------------------------------------------------------
+ensure_vm_running
+
+extra=""
+if ((${#CLAUDE_ARGS[@]})); then
+  extra="$(printf '%q ' "${CLAUDE_ARGS[@]}")"
+fi
+
+if [[ "$DO_MOUNT" == 1 ]]; then
+  rel="$(relpath_under_home "$DIR")"
+  abs="$(cd "$DIR" && pwd -P)"
+  mount_workspace "$abs"
+  trap 'unmount_workspace "$abs"' EXIT
+  ssh_vm_tty "cd ${VM_MOUNT_BASE%/}/${rel} && exec claude --dangerously-skip-permissions ${extra}"
+else
+  ssh_vm_tty "cd ${VM_MOUNT_BASE} && exec claude --dangerously-skip-permissions ${extra}"
+fi

@@ -1,0 +1,16 @@
+[Unit]
+Description=fclaude host firewall (restrict VM access to host privileged ports)
+# The libvirt bridge must exist before our rules reference it.
+After=libvirtd.service network-online.target nftables.service
+Wants=libvirtd.service
+PartOf=libvirtd.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/fclaude/fclaude.nft
+ExecReload=/usr/sbin/nft -f /etc/fclaude/fclaude.nft
+ExecStop=/usr/sbin/nft delete table inet fclaude
+
+[Install]
+WantedBy=multi-user.target

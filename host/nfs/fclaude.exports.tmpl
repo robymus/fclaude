@@ -1,0 +1,8 @@
+# Installed to /etc/exports.d/fclaude.exports
+# Single stable NFSv4 export root. Per-session workspace directories are
+# bind-mounted into it by the wrapper (plan §9); `crossmnt` lets NFSv4 descend
+# into those bind submounts. Only the VM subnet may mount it.
+#
+# root_squash keeps remote root from acting as host root; sec=sys passes uid
+# 1000 which matches both host robymus and VM fclaude for transparent ownership.
+__FCLAUDE_EXPORTS_ROOT__ __FCLAUDE_SUBNET_CIDR__(rw,sync,crossmnt,no_subtree_check,root_squash,sec=sys,fsid=0)

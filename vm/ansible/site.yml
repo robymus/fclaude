@@ -1,0 +1,110 @@
+---
+# fclaude in-VM provisioning. Run by cloud-init on first boot:
+#   ansible-playbook -c local -i localhost, site.yml
+# Keep this a single self-contained playbook (it is shipped base64-embedded in
+# the cloud-init user-data).
+- name: Provision fclaude VM
+  hosts: localhost
+  connection: local
+  become: true
+  vars:
+    fclaude_user: fclaude
+    node_major: "22"
+
+  tasks:
+    - name: Wait for any background apt/dpkg locks to clear
+      ansible.builtin.shell: |
+        while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do sleep 2; done
+      changed_when: false
+
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 600
+
+    - name: Install base tooling
+      ansible.builtin.apt:
+        name:
+          - nfs-common
+          - curl
+          - ca-certificates
+          - gnupg
+          - build-essential
+          - unzip
+          - jq
+          - ripgrep
+          - git
+          - qemu-guest-agent
+        state: present
+
+    # --- Docker (requirement: claude in the VM can use docker) ---
+    - name: Check for docker
+      ansible.builtin.stat:
+        path: /usr/bin/docker
+      register: docker_bin
+
+    - name: Install Docker Engine via get.docker.com
+      ansible.builtin.shell: curl -fsSL https://get.docker.com | sh
+      args:
+        creates: /usr/bin/docker
+      when: not docker_bin.stat.exists
+
+    - name: Add fclaude to the docker group
+      ansible.builtin.user:
+        name: "{{ fclaude_user }}"
+        groups: docker
+        append: true
+
+    - name: Enable docker service
+      ansible.builtin.systemd:
+        name: docker
+        enabled: true
+        state: started
+
+    # --- Node.js + Claude Code ---
+    - name: Check for node
+      ansible.builtin.stat:
+        path: /usr/bin/node
+      register: node_bin
+
+    - name: Add NodeSource repo
+      ansible.builtin.shell: "curl -fsSL https://deb.nodesource.com/setup_{{ node_major }}.x | bash -"
+      args:
+        creates: /etc/apt/sources.list.d/nodesource.list
+      when: not node_bin.stat.exists
+
+    - name: Install Node.js
+      ansible.builtin.apt:
+        name: nodejs
+        state: present
+        update_cache: true
+
+    - name: Install Claude Code globally
+      community.general.npm:
+        name: "@anthropic-ai/claude-code"
+        global: true
+        state: present
+
+    # --- Headless browser runtime libs (infra only; NO browser installed) ---
+    - name: Install headless-chrome runtime dependencies
+      ansible.builtin.apt:
+        name:
+          - libnss3
+          - libatk-bridge2.0-0
+          - libatk1.0-0
+          - libcups2
+          - libgbm1
+          - libasound2t64
+          - libgtk-3-0
+          - libxshmfence1
+          - fonts-liberation
+        state: present
+
+    # --- Workspace mount base ---
+    - name: Ensure /home/fclaude exists and is owned by fclaude
+      ansible.builtin.file:
+        path: /home/fclaude
+        state: directory
+        owner: "{{ fclaude_user }}"
+        group: "{{ fclaude_user }}"
+        mode: '0755'

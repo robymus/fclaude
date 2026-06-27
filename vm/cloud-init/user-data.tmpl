@@ -1,0 +1,47 @@
+#cloud-config
+# fclaude first-boot bootstrap. cloud-init does the minimum (users, ssh,
+# install Ansible, drop the playbook), then Ansible does everything else.
+hostname: __FCLAUDE_VM_NAME__
+preserve_hostname: false
+
+users:
+  - name: __FCLAUDE_VM_USER__
+    uid: __FCLAUDE_VM_UID__
+    groups: [sudo]
+    sudo: ["ALL=(ALL) NOPASSWD:ALL"]
+    shell: /bin/bash
+    lock_passwd: true
+    ssh_authorized_keys:
+      - "__FCLAUDE_PUBKEY__"
+  - name: __FCLAUDE_MAINT_USER__
+    groups: [sudo]
+    sudo: ["ALL=(ALL) NOPASSWD:ALL"]
+    shell: /bin/bash
+    lock_passwd: true
+    ssh_authorized_keys:
+      - "__MAINT_PUBKEY__"
+
+# Grow the root partition + filesystem to fill the (possibly resized) disk.
+growpart:
+  mode: auto
+  devices: ['/']
+resize_rootfs: true
+
+package_update: true
+package_upgrade: false
+packages:
+  - ansible
+  - git
+
+write_files:
+  - path: __FCLAUDE_VM_ANSIBLE_DIR__/site.yml
+    encoding: b64
+    permissions: '0644'
+    content: __ANSIBLE_SITE_B64__
+
+runcmd:
+  # Apply the playbook locally (Ansible runs ON the VM, per requirement).
+  - ['ansible-playbook', '-c', 'local', '-i', 'localhost,', '__FCLAUDE_VM_ANSIBLE_DIR__/site.yml']
+  - ['touch', '/var/lib/fclaude/.provisioned']
+
+final_message: "fclaude VM provisioned after $UPTIME seconds"

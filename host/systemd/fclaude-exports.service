@@ -1,0 +1,17 @@
+[Unit]
+Description=fclaude NFS export root setup (recreate + reload on boot)
+After=nfs-server.service
+Wants=nfs-server.service
+PartOf=nfs-server.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Recreate the export root (it lives under the user's home) and refresh exports.
+# Stale per-session bind mounts from a previous boot do not survive a reboot, so
+# nothing to clean here beyond ensuring the root exists.
+ExecStart=/bin/mkdir -p __FCLAUDE_EXPORTS_ROOT__
+ExecStart=/usr/sbin/exportfs -r
+
+[Install]
+WantedBy=multi-user.target

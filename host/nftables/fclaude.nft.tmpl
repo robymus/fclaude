@@ -1,0 +1,38 @@
+#!/usr/sbin/nft -f
+# fclaude host firewall (plan §8).
+#
+# Goal: the VM may reach the internet and host UNPRIVILEGED ports (>=1024), but
+# NOT host PRIVILEGED ports (<1024) — except the infra ports libvirt's dnsmasq
+# needs (DNS 53, DHCP 67) and NTP (123). NFS works because NFSv4 = port 2049.
+#
+# VM->host traffic terminates on the host and hits the `input` hook at the NAT
+# gateway address. VM->internet / VM->other go through `forward` (untouched, so
+# the libvirt masquerade keeps working). A dedicated table makes uninstall a
+# single `nft delete table inet fclaude`.
+#
+# Placeholders __FCLAUDE_BRIDGE__ / __FCLAUDE_SUBNET_CIDR__ / __FCLAUDE_HOST_IP__
+# are substituted at install time (bridge name is detected from libvirt).
+
+table inet fclaude {
+  chain host_guard {
+    # priority -10 runs before libvirt's filter (priority 0) so our drops win.
+    type filter hook input priority -10; policy accept;
+
+    # Only police traffic coming from the VM bridge, from the VM subnet, to the host.
+    iifname != "__FCLAUDE_BRIDGE__" accept
+    ip saddr != __FCLAUDE_SUBNET_CIDR__ accept
+    ip daddr != __FCLAUDE_HOST_IP__ accept
+
+    # Allow the infrastructure services the VM legitimately needs on the host.
+    udp dport 53 accept
+    tcp dport 53 accept
+    udp dport 67 accept
+    udp dport 123 accept
+
+    # Deny everything else below 1024 (reject TCP for fast failure, drop UDP).
+    tcp dport 1-1023 reject with tcp reset
+    udp dport 1-1023 drop
+
+    # Ports >=1024 (incl. NFSv4 2049, dev servers) fall through to accept.
+  }
+}

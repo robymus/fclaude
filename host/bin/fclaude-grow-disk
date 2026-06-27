@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# fclaude-grow-disk — grow the VM disk, partition, and filesystem online (plan §5).
+#
+#   fclaude-grow-disk <new-size>     e.g.  fclaude-grow-disk 64G
+#
+# Works with the VM running (ext4 supports online resize). If the VM is off, the
+# file is grown and cloud-init's growpart finishes the job on next boot.
+set -euo pipefail
+
+FCLAUDE_LIB_DIR="${FCLAUDE_LIB_DIR:-$HOME/.local/lib/fclaude}"
+# shellcheck source=../../lib/common.sh
+source "${FCLAUDE_LIB_DIR}/common.sh"
+
+NEW_SIZE="${1:-}"
+[[ -n "$NEW_SIZE" ]] || die "usage: fclaude-grow-disk <new-size>  (e.g. 64G)"
+
+load_config
+[[ -f "$FCLAUDE_DISK" ]] || die "disk not found: $FCLAUDE_DISK"
+
+cur_bytes="$(stat -c %s "$FCLAUDE_DISK")"
+info "current disk file size: $((cur_bytes / 1024 / 1024 / 1024)) GiB"
+
+# 1) Grow the physical file.
+info "resizing disk file to $NEW_SIZE..."
+qemu-img resize -f raw "$FCLAUDE_DISK" "$NEW_SIZE"
+
+if [[ "$(vm_state)" == "running" ]]; then
+  # 2) Tell the running VM the block device grew.
+  info "notifying running VM of new block size..."
+  virsh blockresize "$VM_NAME" "$FCLAUDE_DISK" "$NEW_SIZE"
+
+  # 3) Grow the partition and the ext4 filesystem online.
+  info "growing partition + filesystem online..."
+  ssh_vm "sudo growpart /dev/vda 1 && sudo resize2fs /dev/vda1"
+  ssh_vm "df -h /"
+  info "done — disk grown online."
+else
+  info "VM is not running; file grown. growpart/resize2fs will run on next boot."
+fi

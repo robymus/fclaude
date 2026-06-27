@@ -1,0 +1,4 @@
+# Installed to /etc/sudoers.d/fclaude (validated with visudo -c).
+# Lets the fclaude wrappers manage per-session bind mounts and NFS exports
+# without prompting for a password. Scoped to exactly these commands.
+__USER__ ALL=(root) NOPASSWD: /usr/bin/mount, /usr/bin/umount, /usr/sbin/exportfs

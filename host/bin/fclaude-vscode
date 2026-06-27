@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# fclaude-vscode — Claude process wrapper for the VS Code extension (plan §11).
+#
+# Point the extension's `claudeCode.claudeProcessWrapper` setting at this script.
+# It ensures the VM is up, mounts the workspace folder (the extension launches us
+# with cwd = workspace root), and runs the real `claude` inside the VM with stdio
+# forwarded over `ssh -T`. The mount is reference-counted and released when this
+# process exits.
+#
+# NOTE: this wrapper does NOT pass --dangerously-skip-permissions. The extension
+# exposes that as its own setting; enable it there.
+set -euo pipefail
+
+FCLAUDE_LIB_DIR="${FCLAUDE_LIB_DIR:-$HOME/.local/lib/fclaude}"
+# shellcheck source=../../lib/common.sh
+source "${FCLAUDE_LIB_DIR}/common.sh"
+
+load_config
+ensure_vm_running
+
+DIR="$PWD"
+
+extra=""
+if (($#)); then
+  extra="$(printf '%q ' "$@")"
+fi
+
+# Only mount if the workspace is under the shared root; otherwise run in VM home.
+# We do NOT exec when mounting, so the EXIT trap can release the mount afterwards.
+if abs="$(cd "$DIR" 2>/dev/null && pwd -P)" && rel="$(relpath_under_home "$abs" 2>/dev/null)"; then
+  mount_workspace "$abs"
+  trap 'unmount_workspace "$abs"' EXIT
+  ssh -T \
+    -i "$SSH_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+    -o LogLevel=ERROR "${SSH_USER}@${VM_IP}" \
+    "cd ${VM_MOUNT_BASE%/}/${rel} && exec claude ${extra}"
+else
+  warn "workspace not under $SHARE_ROOT; running claude in VM home without a mount"
+  exec ssh -T \
+    -i "$SSH_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+    -o LogLevel=ERROR "${SSH_USER}@${VM_IP}" \
+    "cd ${VM_MOUNT_BASE} && exec claude ${extra}"
+fi

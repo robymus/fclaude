@@ -1,0 +1,7 @@
+# Local Claude Code session settings (machine-specific permission allow-list)
+.claude/settings.local.json
+
+# Editor / OS cruft
+*.swp
+*~
+.DS_Store

@@ -1,0 +1,29 @@
+# ~/.fclaude/config — fclaude runtime configuration
+#
+# Sourced by the wrapper scripts. Edit to taste, then restart sessions.
+# This file is rendered from host/config.template at install time.
+
+# --- Disk ---
+FCLAUDE_DISK="__FCLAUDE_DISK__"
+
+# --- Workspace sharing ---
+# $SHARE_ROOT/a/b on the host is shared as $VM_MOUNT_BASE/a/b in the VM.
+SHARE_ROOT="__HOME__"
+VM_MOUNT_BASE="__FCLAUDE_VM_HOME__"
+
+# --- VM identity / connection ---
+VM_NAME="__FCLAUDE_VM_NAME__"
+VM_IP="__FCLAUDE_VM_IP__"
+HOST_IP="__FCLAUDE_HOST_IP__"
+VM_MEM_GIB="__FCLAUDE_VM_MEM_GIB__"
+VM_VCPU="__FCLAUDE_VM_VCPU__"
+
+SSH_USER="__FCLAUDE_VM_USER__"
+MAINT_USER="__FCLAUDE_MAINT_USER__"
+SSH_KEY="__FCLAUDE_SSH_KEY__"
+SSH_KEY_MAINT="__FCLAUDE_SSH_KEY_MAINT__"
+
+# --- Host state paths ---
+FCLAUDE_HOME="__FCLAUDE_HOME__"
+EXPORTS_ROOT="__FCLAUDE_EXPORTS_ROOT__"
+REFCOUNT_DIR="__FCLAUDE_REFCOUNT_DIR__"
