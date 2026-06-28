@@ -21,6 +21,10 @@ Options:
   --no-mount         Run claude in the VM home with nothing mounted.
   -m, --maintenance  Open an interactive shell in the VM as the maintenance user.
   -s, --status       Print VM state, resources, and active workspaces (no start).
+  --cleanup <ws>     Force-unmount one stuck workspace and clear its refcount.
+                     <ws> is a path as shown by --status (e.g. projects/foo) or
+                     a directory under your $HOME. Use when a leaked session left
+                     a mount behind. Does not start the VM.
   --shutdown         Power off the VM (asks for confirmation), then exit.
   -h, --help         Show this help.
 
@@ -40,6 +44,7 @@ while [[ $# -gt 0 ]]; do
     --no-mount)      DO_MOUNT=0; shift ;;
     -m|--maintenance) MODE_MAINT=1; shift ;;
     -s|--status)     MODE_STATUS=1; shift ;;
+    --cleanup)       MODE_CLEANUP=1; CLEANUP_TARGET="${2:?--cleanup needs a workspace path}"; shift 2 ;;
     --shutdown)      MODE_SHUTDOWN=1; shift ;;
     -h|--help)       usage; exit 0 ;;
     --)              shift; CLAUDE_ARGS+=("$@"); break ;;
@@ -52,6 +57,18 @@ load_config
 # --- One-shot modes -------------------------------------------------------
 if [[ -n "${MODE_STATUS:-}" ]]; then
   ( set +e; fclaude_status )
+  exit 0
+fi
+
+if [[ -n "${MODE_CLEANUP:-}" ]]; then
+  # Resolve the target to a relpath under $SHARE_ROOT. Accept an existing
+  # directory (abs or relative to CWD) or a bare relpath as --status prints it.
+  if [[ -d "$CLEANUP_TARGET" ]]; then
+    rel="$(relpath_under_home "$CLEANUP_TARGET")"
+  else
+    rel="$CLEANUP_TARGET"
+  fi
+  cleanup_workspace "$rel"
   exit 0
 fi
 

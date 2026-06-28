@@ -29,6 +29,31 @@ DIR="$PWD"
 extra=""
 (($#)) && extra="$(printf '%q ' "$@")"
 
+# Workspace-agnostic helper invocations (MCP servers) must NOT mount a workspace.
+# The extension runs *every* claude process through this wrapper, including
+# long-lived MCP helpers like the claude-in-chrome server. Those don't touch
+# workspace files, and the chrome MCP in particular is a per-extension-host
+# singleton that outlives the editing session — mounting for it pins (leaks) the
+# first workspace's NFS mount until VS Code restarts. Detect those and run in the
+# VM home with no mount. The discriminator is fail-open: unrecognized invocations
+# still mount, preserving behaviour for the real editing session.
+fc_is_mcp_helper() {
+  [[ "${1:-}" == "mcp" ]] && return 0   # `claude mcp serve|list|…`
+  local a
+  for a in "$@"; do
+    [[ "$a" == "--claude-in-chrome-mcp" ]] && return 0
+  done
+  return 1
+}
+
+if fc_is_mcp_helper "$@"; then
+  # No mount, no workspace cd, nothing to release: exec straight through.
+  exec ssh -T \
+    -i "$SSH_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+    -o LogLevel=ERROR "${SSH_USER}@${VM_IP}" \
+    "exec claude ${extra}"
+fi
+
 # The workspace must be under the shared root; otherwise we refuse to run (the
 # extension would have no usable mount). We do NOT exec, so the EXIT trap can
 # release the mount afterwards. The relpath check runs in a subshell so its

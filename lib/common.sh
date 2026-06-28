@@ -316,3 +316,34 @@ unmount_workspace() {
   key="$(_key_for "$rel")"
   with_lock "$key" _do_unmount "$rel" "$key"
 }
+
+# Internal: force teardown ignoring the refcount; assumes lock held.
+_do_cleanup() {
+  local rel="$1" key="$2"
+  local export_dir="${EXPORTS_ROOT%/}/${rel}"
+  info "force-unmounting /${rel}"
+  # Best-effort VM-side umount (lazy fallback). VM may be off — ssh_vm just fails.
+  ssh_vm "sudo umount ${VM_MOUNT_BASE%/}/${rel} 2>/dev/null || \
+          sudo umount -l ${VM_MOUNT_BASE%/}/${rel} 2>/dev/null || true; \
+          sudo rmdir -p ${VM_MOUNT_BASE%/}/${rel} 2>/dev/null || true" || true
+  if mountpoint -q "$export_dir"; then
+    sudo umount "$export_dir" 2>/dev/null || sudo umount -l "$export_dir" 2>/dev/null || true
+  fi
+  sudo exportfs -r 2>/dev/null || true
+  ( cd "$EXPORTS_ROOT" 2>/dev/null && rmdir -p "$rel" 2>/dev/null ) || true
+  rm -f "$(_count_file "$key")"   # reset the (now stale) refcount
+}
+
+# Public: forcibly tear down ONE workspace mount and clear its refcount,
+# regardless of the current count. For manual recovery of a mount whose session
+# leaked (e.g. a wrapper killed before its EXIT trap, or a long-lived helper that
+# outlived its editing session). `rel` is a path relative to $SHARE_ROOT, exactly
+# as `fclaude --status` prints it. Does not start the VM.
+cleanup_workspace() {
+  local rel="$1" key
+  rel="${rel#/}"; rel="${rel%/}"
+  [[ -n "$rel" && "$rel" != "." ]] \
+    || die "cleanup needs a workspace path under $SHARE_ROOT (see 'fclaude --status')"
+  key="$(_key_for "$rel")"
+  with_lock "$key" _do_cleanup "$rel" "$key"
+}
