@@ -1,7 +1,9 @@
 [Unit]
 Description=fclaude host firewall (restrict VM access to host privileged ports)
-# The libvirt bridge must exist before our rules reference it.
-After=libvirtd.service network-online.target nftables.service
+# The libvirt bridge must exist before our rules reference it. Order after the
+# libvirt + nftables services only — NOT network-online.target (host uplink,
+# unrelated to the bridge, and part of the boot-time ordering cycle above).
+After=libvirtd.service nftables.service
 Wants=libvirtd.service
 PartOf=libvirtd.service
 

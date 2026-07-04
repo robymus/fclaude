@@ -51,7 +51,7 @@ if fc_is_mcp_helper "$@"; then
   exec ssh -T \
     -i "$SSH_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
     -o LogLevel=ERROR "${SSH_USER}@${VM_IP}" \
-    "exec claude ${extra}"
+    "${CLAUDE_LOGIN_ENV} exec claude ${extra}"
 fi
 
 # The workspace must be under the shared root; otherwise we refuse to run (the
@@ -70,7 +70,7 @@ if abs="$(cd "$DIR" 2>/dev/null && pwd -P)" && (relpath_under_home "$abs") >/dev
   ssh -T \
     -i "$SSH_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
     -o LogLevel=ERROR "${SSH_USER}@${VM_IP}" \
-    "cd $(printf '%q' "$abs") && exec claude ${extra}"
+    "${CLAUDE_LOGIN_ENV} cd $(printf '%q' "$abs") && exec claude ${extra}"
 else
   die "workspace ${DIR} is not under ${SHARE_ROOT}; refusing to run (open a folder under your \$HOME)"
 fi
