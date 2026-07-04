@@ -65,6 +65,18 @@ _ssh_opts() {
     -o ConnectTimeout=5
 }
 
+# Prefix that makes a remote `claude` invocation honor the VM account's login
+# environment. `ssh host "cmd"` runs cmd in a NON-login, NON-interactive shell,
+# which reads neither ~/.profile nor ~/.bashrc (and Ubuntu's ~/.bashrc `return`s
+# early when non-interactive anyway). The login PATH — where native `claude
+# install` puts ~/.local/bin and its ~/.local/bin/env script — lives in
+# ~/.profile, so without this `exec claude` fails with "claude: not found".
+# We source ~/.profile rather than hardcode a path, so whatever the account's
+# profile configures (nvm, a different prefix, …) is respected. Sourced in the
+# SAME shell (one parse), so %q-quoted claude args appended after it stay intact.
+# Single-quoted so $HOME is expanded by the VM shell, not the host.
+CLAUDE_LOGIN_ENV='[ -f "$HOME/.profile" ] && . "$HOME/.profile";'
+
 # Run a command in the VM, no PTY (for scripted/stdio use).
 # The command string is intentionally assembled on the client and run by the
 # VM's shell, so client-side expansion (SC2029) is the desired behaviour.
