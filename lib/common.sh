@@ -94,12 +94,38 @@ ssh_vm() {
   ssh -n "${opts[@]}" "${SSH_USER}@${VM_IP}" "$@"
 }
 
-# The guest reaches the host's llm.log proxy via the host-side gateway bridge
-# (fclaude-llmlog.socket: HOST_IP:port -> 127.0.0.1:port), so the VM just points
-# HTTPS_PROXY at HOST_IP and no per-session ssh forward is needed. (Earlier this
-# used `ssh -R`, but that installs a single exclusive listener in the VM:
-# concurrent sessions collide on the bind, and the listener's owner blocks on
-# exit waiting for the other session's forwarded connections to drain.)
+# Headroom launch prefix for the INTERACTIVE (PTY) wrappers. Claude is launched
+# via `headroom wrap claude` so its API traffic is compressed + measured by the
+# shared in-VM proxy. Emits the command word(s) that PRECEDE the claude args; the
+# caller does `… && exec $(_headroom_launch) <claude-args>`.
+#   FCLAUDE_HEADROOM_ENABLE=0 → plain `claude` (bypass Headroom).
+#   FCLAUDE_HEADROOM_MODEL set → `env ANTHROPIC_MODEL=<m>` + `--1m` (1M context on
+#     that model; the env survives `exec` via `env`, and overrides settings.json).
+# `--no-proxy` reuses the persistent fclaude-headroom.service; `--` passes every
+# following arg straight to claude.
+_headroom_launch() {
+  if [[ "${FCLAUDE_HEADROOM_ENABLE:-1}" != "1" ]]; then
+    printf 'claude'
+    return
+  fi
+  if [[ -n "${FCLAUDE_HEADROOM_MODEL:-}" ]]; then
+    printf 'env ANTHROPIC_MODEL=%q headroom wrap claude --1m --no-proxy --' "$FCLAUDE_HEADROOM_MODEL"
+  else
+    printf 'headroom wrap claude --no-proxy --'
+  fi
+}
+
+# Headroom env for the VS Code (stdio) wrapper. `headroom wrap` prints a banner to
+# stdout, which would corrupt the extension's JSON protocol — so VS Code sessions
+# route through the proxy via ANTHROPIC_BASE_URL instead (compression + metrics,
+# but not wrap's 1M-context/tokensave-MCP features). ENABLE_TOOL_SEARCH=true keeps
+# on-demand tool loading (headroom #746) so a custom base URL doesn't bloat context.
+# shellcheck disable=SC2034  # HEADROOM_VSCODE_ENV is consumed by host/bin/fclaude-vscode
+HEADROOM_VSCODE_ENV=''
+if [[ "${FCLAUDE_HEADROOM_ENABLE:-1}" == "1" ]]; then
+  # shellcheck disable=SC2034
+  HEADROOM_VSCODE_ENV="export ANTHROPIC_BASE_URL=http://127.0.0.1:${FCLAUDE_HEADROOM_PORT:-8787} ENABLE_TOOL_SEARCH=true;"
+fi
 
 # Run a command in the VM with a PTY (for interactive claude / shells).
 ssh_vm_tty() {

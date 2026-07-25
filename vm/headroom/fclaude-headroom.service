@@ -1,0 +1,20 @@
+[Unit]
+Description=fclaude Headroom context-compression proxy (shared)
+Documentation=https://github.com/headroomlabs-ai/headroom
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=fclaude
+Environment=HEADROOM_UPDATE_CHECK=off
+# Loopback-only; --no-http2 avoids shared-connection TLS corruption
+# (SSLV3_ALERT_BAD_RECORD_MAC) when many concurrent streams are cancelled —
+# relevant with several concurrent Claude sessions.
+ExecStart=/opt/headroom/current/bin/headroom proxy --host 127.0.0.1 --port 8787 --no-http2
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

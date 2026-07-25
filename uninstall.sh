@@ -89,10 +89,8 @@ sudo rm -f /etc/sudoers.d/fclaude && info "sudoers drop-in removed."
 
 # --- systemd ----------------------------------------------------------------
 step "Removing systemd units"
-sudo systemctl disable --now fclaude-firewall.service fclaude-exports.service \
-  fclaude-llmlog.socket fclaude-llmlog.service >/dev/null 2>&1 || true
+sudo systemctl disable --now fclaude-firewall.service fclaude-exports.service >/dev/null 2>&1 || true
 sudo rm -f /etc/systemd/system/fclaude-firewall.service /etc/systemd/system/fclaude-exports.service
-sudo rm -f /etc/systemd/system/fclaude-llmlog.socket /etc/systemd/system/fclaude-llmlog.service
 sudo rm -f /etc/systemd/system/nfs-server.service.d/fclaude.conf
 sudo rmdir /etc/systemd/system/nfs-server.service.d 2>/dev/null || true
 sudo systemctl daemon-reload

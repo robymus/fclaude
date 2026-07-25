@@ -75,13 +75,22 @@ FCLAUDE_UPDATE_PROBE_URL="https://speed.cloudflare.com/__down?bytes=10000000"  #
 FCLAUDE_UPDATE_PROBE_MAXTIME="5"  # seconds; also time-caps the probe so slow links transfer little
 FCLAUDE_UPDATE_WARN_DAYS="15"     # `fclaude` warns at startup if the last SUCCESSFUL update is older
 
-# --- llm.log proxy integration (optional) ---
-# llm.log runs on the host, listening on host loopback only (hard-coded). When
-# its CA certs exist at $FCLAUDE_LLMLOG_HOST_DIR, install.sh copies them into the
-# VM, installs a gateway bridge (fclaude-llmlog.socket: HOST_IP:port -> host
-# 127.0.0.1:port), and points the VM's HTTPS_PROXY at HOST_IP:port — so every
-# session reaches llm.log over the NAT without a per-session ssh -R tunnel.
-# Set FCLAUDE_LLMLOG_PORT="" to disable the integration entirely.
-FCLAUDE_LLMLOG_PORT="9922"
-FCLAUDE_LLMLOG_HOST_DIR="${HOME}/.llm.log"
-FCLAUDE_LLMLOG_VM_DIR="${FCLAUDE_VM_HOME}/.llm.log"
+# --- Headroom context-compression proxy (in-VM) ---
+# Headroom (headroom-ai) runs as a shared proxy inside the VM; the fclaude
+# wrappers launch Claude via `headroom wrap claude` so its API traffic is
+# compressed and measured. Set FCLAUDE_HEADROOM_ENABLE=0 to run plain `claude`.
+FCLAUDE_HEADROOM_ENABLE="1"
+FCLAUDE_HEADROOM_PORT="8787"      # the shared proxy service's loopback port
+# 1M context window: routing Claude through a custom base URL disables the 1M
+# beta (headroom #1158) unless we pass `--1m`, which sets ANTHROPIC_MODEL. That
+# env overrides settings.json, so we must name the model. Set to your model to
+# run <model>[1m]; empty = no --1m (respect settings.json, no 1M via the proxy).
+FCLAUDE_HEADROOM_MODEL="claude-opus-5"
+
+# --- Grafana Cloud metrics export (in-VM prometheus agent) ---
+# An in-VM `prometheus --agent` scrapes Headroom's /metrics every 5m and
+# remote_writes to Grafana Cloud. Credentials come from the SOPS secret
+# (secrets/secrets.sops.yaml); these labels are non-secret. Set ENABLE=0 to skip.
+FCLAUDE_METRICS_ENABLE="1"
+FCLAUDE_METRICS_HOST_LABEL="darkness"
+FCLAUDE_METRICS_VM_LABEL="fclaude"
