@@ -25,12 +25,18 @@ Options:
                      <ws> is a path as shown by --status (e.g. projects/foo) or
                      a directory under your $HOME. Use when a leaked session left
                      a mount behind. Does not start the VM.
+  --update           Update Claude Code + system packages in the VM now (ignores
+                     the weekly run's network-speed gate), then exit.
   --shutdown         Power off the VM (asks for confirmation), then exit.
   -h, --help         Show this help.
 
 Anything after `--` (or any unrecognized trailing args) is passed to claude.
 The target directory must be under your $HOME and is shared at the same relative
 path under /home/fclaude in the VM.
+
+At session start, fclaude warns if the last successful update is older than
+FCLAUDE_UPDATE_WARN_DAYS (default 15) — a reminder that the auto-updater or the
+weekly apt timer may have stalled. Clear it with `fclaude --update`.
 EOF
 }
 
@@ -45,6 +51,7 @@ while [[ $# -gt 0 ]]; do
     -m|--maintenance) MODE_MAINT=1; shift ;;
     -s|--status)     MODE_STATUS=1; shift ;;
     --cleanup)       MODE_CLEANUP=1; CLEANUP_TARGET="${2:?--cleanup needs a workspace path}"; shift 2 ;;
+    --update)        MODE_UPDATE=1; shift ;;
     --shutdown)      MODE_SHUTDOWN=1; shift ;;
     -h|--help)       usage; exit 0 ;;
     --)              shift; CLAUDE_ARGS+=("$@"); break ;;
@@ -72,6 +79,11 @@ if [[ -n "${MODE_CLEANUP:-}" ]]; then
   exit 0
 fi
 
+if [[ -n "${MODE_UPDATE:-}" ]]; then
+  fclaude_update
+  exit $?
+fi
+
 if [[ -n "${MODE_SHUTDOWN:-}" ]]; then
   if [[ "$(vm_state)" != "running" ]]; then
     info "VM $VM_NAME is not running."
@@ -94,6 +106,9 @@ fi
 
 # --- Normal run -----------------------------------------------------------
 ensure_vm_running
+
+# Warn (best-effort) if updates have silently stalled — never blocks the session.
+( set +e; fclaude_staleness_warn ) || true
 
 extra=""
 if ((${#CLAUDE_ARGS[@]})); then

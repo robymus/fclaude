@@ -1,0 +1,12 @@
+[Unit]
+Description=Weekly fclaude apt/system-package upgrade
+
+[Timer]
+OnCalendar=Sun 04:00
+RandomizedDelaySec=1h
+# Persistent: if the VM was shut off at the scheduled time, run on next boot so a
+# frequently-powered-off VM still gets its weekly upgrade (network gate re-checked).
+Persistent=true
+
+[Install]
+WantedBy=timers.target

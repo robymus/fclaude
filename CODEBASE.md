@@ -13,7 +13,8 @@ host wrapper (~/.local/bin/fclaude)
   → ssh fclaude@192.168.122.10 "cd /home/fclaude/<rel> && claude --dangerously-skip-permissions"
   → unmount_workspace on EXIT (reference counted)
 
-VM "fclaude" (Ubuntu 24.04, KVM): uid-1000 fclaude user, sudo NOPASSWD, docker, node+claude-code.
+VM "fclaude" (Ubuntu 24.04, KVM): uid-1000 fclaude user, sudo NOPASSWD, docker, node, and a
+self-updating native Claude Code install (per-user `~/.local`, latest channel).
 Host firewall (nftables table 'fclaude') blocks VM→host privileged ports (<1024) except 53/67/123.
 ```
 
@@ -31,15 +32,16 @@ Host firewall (nftables table 'fclaude') blocks VM→host privileged ports (<102
 | File | Role |
 |---|---|
 | `constants.sh` | **Single source of truth** for names/IPs/MAC/paths/sizes. Sourced by install/uninstall and baked into `~/.fclaude/config`. Change defaults here. |
-| `common.sh` | Runtime library sourced by all wrappers. Provides: `load_config`, logging, `ssh_vm`/`ssh_vm_tty`/`ssh_maint`, `vm_state`/`ensure_vm_running`, `with_lock` (flock), `refcount_*`, `relpath_under_home`, and `mount_workspace`/`unmount_workspace` (the reference-counted bind-mount + NFSv4 flow). Host-privileged ops (`mount`/`umount`/`exportfs`) go through `sudo` (NOPASSWD drop-in). |
+| `common.sh` | Runtime library sourced by all wrappers. Provides: `load_config`, logging, `ssh_vm`/`ssh_vm_tty`/`ssh_maint`, `vm_state`/`ensure_vm_running`, `with_lock` (flock), `refcount_*`, `relpath_under_home`, `mount_workspace`/`unmount_workspace` (the reference-counted bind-mount + NFSv4 flow), and the update helpers `fclaude_update` (on-demand `claude update` + gate-bypassed apt) / `fclaude_staleness_warn` (session-start warning) with the pure, unit-tested `_fc_staleness_messages`/`_fc_days_ago`. Host-privileged ops (`mount`/`umount`/`exportfs`) go through `sudo` (NOPASSWD drop-in). |
 
 ### `host/bin/` (installed to `~/.local/bin`)
 | File | Role |
 |---|---|
-| `fclaude` | Main CLI. Flags: `--dir`, `--no-mount`, `-m/--maintenance`, `-s/--status`, `--cleanup <ws>`, `--shutdown`, `--`/passthrough. Passes `--dangerously-skip-permissions`. Mounts CWD, runs claude over ssh PTY, unmounts on EXIT trap. `--status` calls `fclaude_status` (in common.sh) — a best-effort report (state/IP/vCPU/mem/uptime/CPU/disk + guest mem/df + active workspace refcounts) that never starts the VM. `--cleanup <ws>` calls `cleanup_workspace` — force-unmounts ONE workspace (VM-side `umount` w/ lazy fallback + host export bind + `exportfs -r` + dir cleanup) and clears its refcount regardless of count, for recovering a leaked mount; accepts a `--status`-style relpath or a real dir under `$HOME`; never starts the VM. |
+| `fclaude` | Main CLI. Flags: `--dir`, `--no-mount`, `-m/--maintenance`, `-s/--status`, `--cleanup <ws>`, `--update`, `--shutdown`, `--`/passthrough. Passes `--dangerously-skip-permissions`. Mounts CWD, runs claude over ssh PTY, unmounts on EXIT trap. On a normal session start it calls `fclaude_staleness_warn` (best-effort, wrapped `set +e`) to flag a stalled updater. `--status` calls `fclaude_status` (in common.sh) — best-effort report (state/IP/vCPU/mem/uptime/CPU/disk + guest mem/df + **installed Claude version + last apt run** + active workspace refcounts) that never starts the VM. `--update` calls `fclaude_update` (Claude + apt now, network gate bypassed). `--cleanup <ws>` calls `cleanup_workspace` — force-unmounts ONE workspace (VM-side `umount` w/ lazy fallback + host export bind + `exportfs -r` + dir cleanup) and clears its refcount regardless of count, for recovering a leaked mount; accepts a `--status`-style relpath or a real dir under `$HOME`; never starts the VM. |
 | `fclaude-vscode` | VS Code `claudeCode.claudeProcessWrapper`. Drops `argv[1]` (the extension's bundled claude path — byte-identical to the VM's native claude) and forwards the rest. **Skips the mount for workspace-agnostic helper invocations** (`fc_is_mcp_helper`: first arg `mcp`, or any `--claude-in-chrome-mcp`) — those run in the VM home with no mount/cd/EXIT-trap, because the extension runs *every* claude process through this wrapper and the chrome-MCP singleton would otherwise pin (leak) the first workspace's mount for the life of the editor; discriminator is **fail-open** (unrecognized → mount). For a real session: mounts CWD, then `cd`s into the **host absolute path** (resolvable in the VM via the `/home/<hostuser>` bind mount) so claude reports host-matching paths back to the editor. stdio (`ssh -T`), **no** skip-permissions flag (extension sets that). **Errors out** if CWD isn't under `$HOME`. |
 | `fclaude-grow-disk` | `qemu-img resize` → `virsh blockresize` → in-VM `growpart`+`resize2fs` (online ext4 grow). |
 | `fclaude-llmlog-setup` | **Standalone** sudo installer for the llm.log gateway bridge (renders+enables `fclaude-llmlog.{socket,service}` from the repo templates and repoints the VM's `/etc/environment` proxy). Run from a repo checkout to apply the bridge without a full `install.sh`. NOT installed to `~/.local/bin` (it reads the templates relative to itself). |
+| `fclaude-update-setup` | **Standalone** retrofit for auto-update on an already-provisioned VM (installed to `~/.local/bin`). Removes any npm-global Claude, installs/keeps the **native** Claude (as fclaude, no sudo — keeps `~/.local` user-owned), merges `autoUpdatesChannel: latest` into `settings.json` (jq, clobber-safe), pushes `vm/update/*` to `/usr/local/sbin` + `/etc/systemd/system`, writes `/etc/default/fclaude-update` from host knobs, seeds `last-apt-success`, and enables the weekly timer (or disables it when `FCLAUDE_UPDATE_APT=0`). `--now` forces one immediate gate-bypassed apt run. Idempotent; run from a repo checkout. |
 
 ### `host/` config templates (rendered + installed by install.sh)
 | File | Installed to | Role |
@@ -86,11 +88,23 @@ only after that address exists.
 | File | Role |
 |---|---|
 | `cloud-init/meta-data.tmpl` | instance-id + hostname. |
-| `cloud-init/user-data.tmpl` | First boot: create `fclaude` (uid 1000, sudo NOPASSWD) + `maint` users, inject pubkeys, growpart/resize, install `ansible`+`git`, drop the playbook via `write_files` (base64), run it locally (`-e host_user=<USER>`). |
+| `cloud-init/user-data.tmpl` | First boot: create `fclaude` (uid 1000, sudo NOPASSWD) + `maint` users, inject pubkeys, growpart/resize, install `ansible`+`git`, drop the playbook via `write_files` (base64), run it locally (`-e host_user=<USER> -e fclaude_update_apt=<0\|1>`). |
 | `cloud-init/network-config.tmpl` | NoCloud netplan v2 (rendered into 50-cloud-init.yaml at first boot via `cloud-localds -N`): DHCP on the pinned NIC **plus a conservative `mtu` (`FCLAUDE_VM_MTU`, default 1400)** so the VM tolerates host-side tunnels (e.g. WireGuard ~1420) without black-holing large TLS responses. Baked into the primary file — **never** a second netplan drop-in (a second file re-declaring the interface conflicts with `match`/`set-name`), and **never** applied live with `netplan apply` over ssh (that disrupts the running NIC and needs a reboot to recover). |
-| `ansible/site.yml` | In-VM provisioning (runs IN the VM, `-c local`): base tools, **Docker** (get.docker.com, fclaude in docker group), Node 22 + `@anthropic-ai/claude-code`, headless-chrome runtime libs (no browser), `/home/fclaude` ownership, host-home bind mount. Shipped base64-embedded in the seed. |
+| `ansible/site.yml` | In-VM provisioning (runs IN the VM, `-c local`): base tools, **Docker** (get.docker.com, fclaude in docker group), **Node 22 (for user projects, not Claude)**, **native Claude Code** (`claude.ai/install.sh \| bash`, run as fclaude) + `autoUpdatesChannel: latest` merged into `settings.json`, headless-chrome runtime libs (no browser), `/home/fclaude` ownership, host-home bind mount, and the **weekly apt-upgrade** assets (script + service + timer, enabled when `fclaude_update_apt=1`) + seeded `last-apt-success`. Shipped base64-embedded in the seed; the `vm/update/*` assets are injected into `__*_B64__` placeholders by install.sh before embedding. |
 | `ansible/llmlog.yml` | **Host-run** playbook (control node = host, VM over ssh) for the optional llm.log integration: `ansible.builtin.copy` pushes the host's CA certs into the VM and `blockinfile` sets the proxy/CA env vars in `/etc/environment`. Run from the host (not in-VM) so `copy` can read the host's `~/.llm.log`. install.sh invokes it last (step 14), gated on host certs + `ansible-playbook`. NB: pass ssh `-o` opts in **attached** form (`-oKey=val`) — ansible-core 2.19 argparse-crashes on the space-separated form. |
 | `libvirt/domain.xml.tmpl` | KVM domain: 8 GiB / 6 vCPU, q35, **named CPU model `FCLAUDE_VM_CPU_MODEL` (EPYC-Milan) — NOT host-passthrough** (raw Zen4 passthrough corrupts guest memory; see below), raw vda (cache=none, discard=unmap), seed cdrom, virtio NIC with fixed MAC, guest agent, virtio-rng. |
+
+### `vm/update/` (weekly system-package upgrade; injected into site.yml, also pushed by `fclaude-update-setup`)
+| File | Installed to (VM) | Role |
+|---|---|---|
+| `fclaude-apt-upgrade.sh` | `/usr/local/sbin/` | Runs as root. **Network-speed gate** first: a size+time-capped `curl` probe (`FCLAUDE_UPDATE_PROBE_URL`, default Cloudflare `__down`) measures the VM's downlink (= host uplink via NAT); if below `FCLAUDE_UPDATE_MIN_MBIT` (default 100) — or offline — it stamps `skipped(slow:N)` and exits 0 (a skip is success). `FCLAUDE_UPDATE_FORCE=1` bypasses the gate (set by `fclaude --update`). Then dpkg-lock wait → `apt-get update` + `upgrade --force-confold` (not dist-upgrade) + `autoremove`. Writes two stamps under `/var/lib/fclaude/`: `last-apt-upgrade` (every attempt: `ok`/`error`/`skipped(...)`) and `last-apt-success` (**ISO content**, advanced only on a real upgrade — drives the staleness warning). Config from `/etc/default/fclaude-update`; every value has a built-in default. |
+| `fclaude-apt-upgrade.service` | `/etc/systemd/system/` | Oneshot; `EnvironmentFile=-/etc/default/fclaude-update`; `Nice=10`, idle IO; after `network-online`+`docker`. |
+| `fclaude-apt-upgrade.timer` | `/etc/systemd/system/` | `OnCalendar=Sun 04:00`, `RandomizedDelaySec=1h`, `Persistent=true` (catches up on next boot if the VM was off). |
+
+### `test/`
+| File | Role |
+|---|---|
+| `test-staleness.sh` | Pure-logic unit tests for `_fc_staleness_messages`/`_fc_days_ago` (reason selection, apt-disabled, claude branch, non-numeric epochs, `set -e` safety). `bash test/test-staleness.sh`; run by CI. |
 
 ## Runtime state (created on the host by install, never in the repo)
 `~/.fclaude/`: `fclaude-disk` (32G raw ext4 VM disk), `seed.iso`, `config`, `vm` (identity),
@@ -132,11 +146,36 @@ only after that address exists.
   with `sudo ./host/bin/fclaude-llmlog-setup`. (`host/systemd/fclaude-llmlog.*`,
   `host/bin/fclaude-llmlog-setup`, `vm/ansible/llmlog.yml`)
 - **Reference counting** (flock + counter files) so CLI and VS Code sessions on the same dir coexist; unmount only on last exit. (`lib/common.sh`) A refcount can still leak if a wrapper is `SIGKILL`ed before its EXIT trap, or — the case that motivated `fc_is_mcp_helper` — when a long-lived helper (the chrome-MCP singleton) genuinely outlives its editing session. The first is recovered manually with `fclaude --cleanup <ws>`; the second is now prevented at the source by not mounting for MCP helpers. A liveness/heartbeat reaper was considered and rejected: it can't catch the helper case (that process is genuinely alive), and a `--cleanup` escape hatch covers the SIGKILL case without a background timer.
+- **Native Claude install + split update strategy** — Claude Code uses the **native installer** (not
+  the npm global) specifically because its per-version dirs (`~/.local/share/claude/versions/*`) +
+  atomic symlink swap make **updating safe while sessions run** (a live process keeps its version's
+  files; the npm global's in-place `rm -rf`+extract could yank a lazy-loaded asset from a running
+  session). So Claude keeps *itself* current via its background auto-updater on the `latest` channel —
+  no host machinery, no "defer while a session is running" guard (which, with always-on sessions,
+  would mean *never* updating). Only **system packages** need the custom weekly timer, and apt has no
+  live-`claude` hazard. Installed **per-user as fclaude** (never root) so the auto-updater can write
+  `~/.local`. PATH over non-interactive ssh already works via the wrapper's `CLAUDE_LOGIN_ENV`
+  sourcing `~/.profile`. (`vm/ansible/site.yml`, `vm/update/`, `lib/common.sh`,
+  `host/bin/fclaude-update-setup`)
+- **Update staleness surfaced, not hidden** — the weekly apt run may legitimately *skip* for weeks on
+  slow/mobile networks, so `fclaude_staleness_warn` keys off the **last successful** update
+  (`last-apt-success`, parsed by **content** not mtime so a disk restore can't mask it) and, at
+  session start, warns with the reason (failed / skipped-slow / never-run). Claude staleness is a
+  best-effort check on the newest `versions/*` dir mtime. (`lib/common.sh`)
 - **Single source of truth** — all IPs/paths/names in `lib/constants.sh`; everything else is templated.
 
 ## Verification status
-Static checks performed in development: `bash -n` on every script; `nft`/YAML/XML render validation;
-a standalone self-test of the refcount/lock/relpath logic (including a 20-way concurrency test);
-full template-render dry run with base64 playbook round-trip. **Live end-to-end checks (VM boot,
-Docker-in-VM, firewall matrix, NFS round-trip, online disk grow) require running `install.sh` on the
-host with sudo** and are listed in [.plans/fclaude-TODO.md](.plans/fclaude-TODO.md) Phase 8.
+Static checks performed in development: `bash -n` and **shellcheck** on every script (`.shellcheckrc`
+records the two intentional repo-wide disables); `nft`/YAML/XML render validation; a standalone
+self-test of the refcount/lock/relpath logic (including a 20-way concurrency test); full
+template-render dry run with base64 playbook round-trip. **CI** (`.github/workflows/ci.yml`) enforces
+shellcheck + `test/test-staleness.sh` + a rendered-playbook ansible syntax-check on every push/PR.
+
+Auto-update (`.plans/auto-update-*`) was verified **live** on the running VM: native install +
+`latest`-channel pin, weekly service run (probe 405 Mbit/s → apt → both stamps advanced),
+slow-network skip preserving `last-apt-success`, force bypass, `fclaude --update` and channel-switch
+(`stable` 2.1.212 → `latest` 2.1.220), `--status` version/apt lines, and the backdated-stamp
+staleness warning. Other **live end-to-end
+checks (VM boot, Docker-in-VM, firewall matrix, NFS round-trip, online disk grow) require running
+`install.sh` on the host with sudo** and are listed in
+[.plans/fclaude-TODO.md](.plans/fclaude-TODO.md) Phase 8.

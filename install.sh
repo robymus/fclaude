@@ -98,7 +98,22 @@ MAINT_PUBKEY="$(cat "${FCLAUDE_SSH_KEY_MAINT}.pub")"
 
 # Export everything templates may reference.
 export HOME FCLAUDE_PUBKEY MAINT_PUBKEY
-ANSIBLE_SITE_B64="$(base64 -w0 "${REPO_DIR}/vm/ansible/site.yml")"
+
+# The playbook ships base64-embedded in the cloud-init seed, so it can't read
+# external files at first boot. Inject the canonical vm/update/* assets into
+# site.yml's __*_B64__ placeholders (single source of truth), then embed the
+# whole rendered playbook. Placeholder values are single-line base64 (no '|'),
+# safe as sed replacements.
+_apt_sh_b64="$(base64 -w0 "${REPO_DIR}/vm/update/fclaude-apt-upgrade.sh")"
+_apt_svc_b64="$(base64 -w0 "${REPO_DIR}/vm/update/fclaude-apt-upgrade.service")"
+_apt_tmr_b64="$(base64 -w0 "${REPO_DIR}/vm/update/fclaude-apt-upgrade.timer")"
+_site_rendered="$(mktemp)"
+sed -e "s|__APT_UPGRADE_SH_B64__|${_apt_sh_b64}|g" \
+    -e "s|__APT_UPGRADE_SERVICE_B64__|${_apt_svc_b64}|g" \
+    -e "s|__APT_UPGRADE_TIMER_B64__|${_apt_tmr_b64}|g" \
+    "${REPO_DIR}/vm/ansible/site.yml" >"$_site_rendered"
+ANSIBLE_SITE_B64="$(base64 -w0 "$_site_rendered")"
+rm -f "$_site_rendered"
 export ANSIBLE_SITE_B64
 RENDER_VARS=(
   HOME FCLAUDE_DISK FCLAUDE_SEED FCLAUDE_HOME FCLAUDE_EXPORTS_ROOT FCLAUDE_REFCOUNT_DIR
@@ -107,6 +122,8 @@ RENDER_VARS=(
   FCLAUDE_VM_VCPU FCLAUDE_VM_MTU FCLAUDE_VM_CPU_MODEL FCLAUDE_LIBVIRT_NET FCLAUDE_VM_HOME
   FCLAUDE_VM_ANSIBLE_DIR FCLAUDE_SUBNET_CIDR FCLAUDE_PUBKEY MAINT_PUBKEY ANSIBLE_SITE_B64
   USER FCLAUDE_LLMLOG_PORT FCLAUDE_SOCKET_PROXYD
+  FCLAUDE_UPDATE_APT FCLAUDE_UPDATE_MIN_MBIT FCLAUDE_UPDATE_PROBE_URL
+  FCLAUDE_UPDATE_PROBE_MAXTIME FCLAUDE_UPDATE_WARN_DAYS
 )
 
 # Locate systemd-socket-proxyd for the llm.log gateway bridge (path varies with
@@ -275,7 +292,7 @@ info "boot-persistence units enabled."
 step "11/14Install wrappers + library"
 install -m 644 "${REPO_DIR}/lib/common.sh"    "${FCLAUDE_LIB_DIR}/common.sh"
 install -m 644 "${REPO_DIR}/lib/constants.sh" "${FCLAUDE_LIB_DIR}/constants.sh"
-for w in fclaude fclaude-vscode fclaude-grow-disk; do
+for w in fclaude fclaude-vscode fclaude-grow-disk fclaude-update-setup; do
   install -m 755 "${REPO_DIR}/host/bin/${w}" "${FCLAUDE_BIN_DIR}/${w}"
 done
 info "wrappers installed to $FCLAUDE_BIN_DIR"

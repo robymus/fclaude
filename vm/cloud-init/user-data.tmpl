@@ -41,7 +41,7 @@ write_files:
 
 runcmd:
   # Apply the playbook locally (Ansible runs ON the VM, per requirement).
-  - ['ansible-playbook', '-c', 'local', '-i', 'localhost,', '-e', 'host_user=__USER__', '__FCLAUDE_VM_ANSIBLE_DIR__/site.yml']
+  - ['ansible-playbook', '-c', 'local', '-i', 'localhost,', '-e', 'host_user=__USER__', '-e', 'fclaude_update_apt=__FCLAUDE_UPDATE_APT__', '__FCLAUDE_VM_ANSIBLE_DIR__/site.yml']
   - ['touch', '/var/lib/fclaude/.provisioned']
 
 final_message: "fclaude VM provisioned after $UPTIME seconds"

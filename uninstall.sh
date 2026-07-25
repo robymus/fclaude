@@ -98,9 +98,31 @@ sudo rmdir /etc/systemd/system/nfs-server.service.d 2>/dev/null || true
 sudo systemctl daemon-reload
 info "systemd units removed."
 
+# --- VM-side auto-update units ----------------------------------------------
+# Best-effort: disable/remove the weekly apt-upgrade timer inside the VM while it
+# is still reachable. Claude Code's native install is intentionally LEFT in place
+# (it's the user's tool + auth); we only remove fclaude's own timer machinery.
+step "Removing the in-VM apt-upgrade timer (best-effort; VM may be off)"
+if [[ -r "$FCLAUDE_CONFIG" ]]; then
+  # shellcheck disable=SC1090
+  ( source "$FCLAUDE_CONFIG" 2>/dev/null || true
+    if [[ -n "${VM_IP:-}" && -n "${SSH_USER:-}" && -n "${SSH_KEY:-}" ]]; then
+      ssh -n -i "$SSH_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        -o LogLevel=ERROR -o ConnectTimeout=5 "${SSH_USER}@${VM_IP}" \
+        'sudo systemctl disable --now fclaude-apt-upgrade.timer >/dev/null 2>&1 || true; \
+         sudo rm -f /etc/systemd/system/fclaude-apt-upgrade.timer \
+                    /etc/systemd/system/fclaude-apt-upgrade.service \
+                    /usr/local/sbin/fclaude-apt-upgrade.sh /etc/default/fclaude-update; \
+         sudo systemctl daemon-reload >/dev/null 2>&1 || true' \
+        2>/dev/null && info "in-VM apt-upgrade timer removed." \
+        || warn "could not reach the VM to remove its apt-upgrade timer (VM off?); harmless."
+    fi )
+fi
+
 # --- Wrappers ---------------------------------------------------------------
 step "Removing wrappers + library"
-rm -f "${FCLAUDE_BIN_DIR}/fclaude" "${FCLAUDE_BIN_DIR}/fclaude-vscode" "${FCLAUDE_BIN_DIR}/fclaude-grow-disk"
+rm -f "${FCLAUDE_BIN_DIR}/fclaude" "${FCLAUDE_BIN_DIR}/fclaude-vscode" \
+      "${FCLAUDE_BIN_DIR}/fclaude-grow-disk" "${FCLAUDE_BIN_DIR}/fclaude-update-setup"
 rm -rf "$FCLAUDE_LIB_DIR"
 info "wrappers removed."
 

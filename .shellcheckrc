@@ -1,0 +1,12 @@
+# fclaude shellcheck configuration.
+#
+# SC1091: sourced files (lib/common.sh, lib/constants.sh, ~/.fclaude/config) are
+# not resolvable in every lint context; the real sources carry `# shellcheck
+# source=` directives where static following is possible. Silence the residual
+# "not following" info so the lint gate is clean at default severity.
+disable=SC1091
+
+# SC2015: the `cmd && info "…" || true|warn "…"` idiom is used throughout the
+# installers as a deliberate "best-effort with a note" pattern; the B branch is
+# always a non-failing log call, so the C-branch caveat does not apply here.
+disable=SC2015

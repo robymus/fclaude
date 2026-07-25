@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+# fclaude-update-setup — retrofit auto-update onto an ALREADY-provisioned VM.
+#
+# site.yml only runs at first boot, so an existing VM needs this one-shot to:
+#   1. replace any npm-global Claude Code with the native installer (per-user,
+#      hot-update-safe) and pin the latest auto-update channel;
+#   2. install the weekly, network-gated apt-upgrade script + systemd timer;
+#   3. seed the staleness-warning clock.
+#
+# Run from a repo checkout as your normal user (it drives the VM over ssh; the
+# VM's fclaude account has NOPASSWD sudo for the root-owned bits):
+#
+#   ./host/bin/fclaude-update-setup            # apply/refresh
+#   ./host/bin/fclaude-update-setup --now      # also run an apt upgrade immediately
+#
+# Idempotent: safe to re-run to push updated assets or changed config knobs.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+
+# Prefer the repo's library (this script is normally run from a checkout); fall
+# back to the installed copy.
+if [[ -r "${REPO_DIR}/lib/common.sh" ]]; then
+  # shellcheck source=../../lib/common.sh
+  source "${REPO_DIR}/lib/common.sh"
+else
+  # shellcheck source=/dev/null
+  source "${FCLAUDE_LIB_DIR:-$HOME/.local/lib/fclaude}/common.sh"
+fi
+
+FORCE_NOW=0
+[[ "${1:-}" == "--now" ]] && FORCE_NOW=1
+
+load_config
+
+UPDATE_DIR="${REPO_DIR}/vm/update"
+for f in fclaude-apt-upgrade.sh fclaude-apt-upgrade.service fclaude-apt-upgrade.timer; do
+  [[ -r "${UPDATE_DIR}/${f}" ]] || die "missing ${UPDATE_DIR}/${f} — run from a repo checkout"
+done
+
+# Non-interactive scp using the same options/key as ssh_vm.
+scp_vm() {
+  local -a opts=()
+  mapfile -d '' -t opts < <(_ssh_opts)
+  scp "${opts[@]}" "$@"
+}
+
+ensure_vm_running
+
+# --- Claude Code: npm-global -> native installer --------------------------
+info "removing any old npm-global Claude Code (the native install supersedes it)"
+ssh_vm 'sudo npm uninstall -g @anthropic-ai/claude-code >/dev/null 2>&1 || true'
+
+info "installing Claude Code via the native installer (latest) as ${SSH_USER}, if absent"
+ssh_vm_tty "${CLAUDE_LOGIN_ENV} if [ -x \"\$HOME/.local/bin/claude\" ]; then \
+    echo \"native install present: \$(claude --version 2>/dev/null || echo unknown)\"; \
+  else curl -fsSL https://claude.ai/install.sh | bash; fi"
+
+info "pinning the latest auto-update channel in settings.json (merge, not clobber)"
+# shellcheck disable=SC2016  # intentional: $HOME/$f/$tmp expand in the VM shell
+ssh_vm 'f="$HOME/.claude/settings.json"; mkdir -p "$HOME/.claude"; \
+  if [ -s "$f" ]; then tmp="$(mktemp)"; \
+    jq ". + {autoUpdatesChannel: \"latest\"}" "$f" > "$tmp" && mv "$tmp" "$f"; \
+  else printf "{\"autoUpdatesChannel\":\"latest\"}\n" > "$f"; fi'
+
+# --- Weekly apt-upgrade script + units ------------------------------------
+info "pushing the weekly apt-upgrade script + systemd units"
+scp_vm "${UPDATE_DIR}/fclaude-apt-upgrade.sh" \
+       "${UPDATE_DIR}/fclaude-apt-upgrade.service" \
+       "${UPDATE_DIR}/fclaude-apt-upgrade.timer" \
+       "${SSH_USER}@${VM_IP}:/tmp/"
+ssh_vm 'sudo install -m0755 /tmp/fclaude-apt-upgrade.sh /usr/local/sbin/fclaude-apt-upgrade.sh \
+  && sudo install -m0644 /tmp/fclaude-apt-upgrade.service /etc/systemd/system/fclaude-apt-upgrade.service \
+  && sudo install -m0644 /tmp/fclaude-apt-upgrade.timer /etc/systemd/system/fclaude-apt-upgrade.timer \
+  && rm -f /tmp/fclaude-apt-upgrade.sh /tmp/fclaude-apt-upgrade.service /tmp/fclaude-apt-upgrade.timer'
+
+info "writing /etc/default/fclaude-update from host config"
+tmpenv="$(mktemp)"
+printf 'FCLAUDE_UPDATE_APT=%s\nFCLAUDE_UPDATE_MIN_MBIT=%s\nFCLAUDE_UPDATE_PROBE_URL=%s\nFCLAUDE_UPDATE_PROBE_MAXTIME=%s\n' \
+  "${FCLAUDE_UPDATE_APT:-1}" "${FCLAUDE_UPDATE_MIN_MBIT:-100}" \
+  "${FCLAUDE_UPDATE_PROBE_URL:-https://speed.cloudflare.com/__down?bytes=10000000}" \
+  "${FCLAUDE_UPDATE_PROBE_MAXTIME:-5}" > "$tmpenv"
+scp_vm "$tmpenv" "${SSH_USER}@${VM_IP}:/tmp/fclaude-update.env"
+rm -f "$tmpenv"
+ssh_vm 'sudo install -m0644 /tmp/fclaude-update.env /etc/default/fclaude-update && rm -f /tmp/fclaude-update.env'
+
+info "seeding the staleness-warning clock (if not already set)"
+ssh_vm 'sudo mkdir -p /var/lib/fclaude; \
+  [ -f /var/lib/fclaude/last-apt-success ] || date -Is | sudo tee /var/lib/fclaude/last-apt-success >/dev/null'
+
+# --- Enable/disable the weekly timer per config ---------------------------
+if [[ "${FCLAUDE_UPDATE_APT:-1}" == "1" ]]; then
+  info "enabling the weekly apt-upgrade timer"
+  ssh_vm 'sudo systemctl daemon-reload && sudo systemctl enable --now fclaude-apt-upgrade.timer'
+  ssh_vm 'systemctl list-timers fclaude-apt-upgrade.timer --no-pager' || true
+else
+  info "FCLAUDE_UPDATE_APT=0 — leaving the weekly apt timer disabled"
+  ssh_vm 'sudo systemctl daemon-reload; sudo systemctl disable --now fclaude-apt-upgrade.timer >/dev/null 2>&1 || true'
+fi
+
+# --- Optional immediate run -----------------------------------------------
+if [[ "$FORCE_NOW" == "1" ]]; then
+  info "running an immediate apt upgrade (network gate bypassed)"
+  ssh_vm_tty 'sudo env FCLAUDE_UPDATE_FORCE=1 /usr/local/sbin/fclaude-apt-upgrade.sh'
+fi
+
+info "verifying native claude resolves over ssh"
+ssh_vm "${CLAUDE_LOGIN_ENV} command -v claude >/dev/null && claude --version" \
+  || warn "claude did not resolve over ssh — check the fclaude account's ~/.profile PATH"
+
+info "fclaude-update-setup done."
