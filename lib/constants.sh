@@ -94,3 +94,4 @@ FCLAUDE_HEADROOM_MODEL="claude-opus-5"
 FCLAUDE_METRICS_ENABLE="1"
 FCLAUDE_METRICS_HOST_LABEL="darkness"
 FCLAUDE_METRICS_VM_LABEL="fclaude"
+FCLAUDE_PROMETHEUS_VERSION="3.13.1"  # pinned prometheus (agent mode) installed in the VM

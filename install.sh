@@ -107,10 +107,23 @@ export HOME FCLAUDE_PUBKEY MAINT_PUBKEY
 _apt_sh_b64="$(base64 -w0 "${REPO_DIR}/vm/update/fclaude-apt-upgrade.sh")"
 _apt_svc_b64="$(base64 -w0 "${REPO_DIR}/vm/update/fclaude-apt-upgrade.service")"
 _apt_tmr_b64="$(base64 -w0 "${REPO_DIR}/vm/update/fclaude-apt-upgrade.timer")"
+_hr_svc_b64="$(base64 -w0 "${REPO_DIR}/vm/headroom/fclaude-headroom.service")"
+_hr_quiet_b64="$(base64 -w0 "${REPO_DIR}/vm/headroom/headroom-quiet")"
+_hr_act_sh_b64="$(base64 -w0 "${REPO_DIR}/vm/headroom/fclaude-headroom-activate.sh")"
+_hr_act_svc_b64="$(base64 -w0 "${REPO_DIR}/vm/headroom/fclaude-headroom-activate.service")"
+_hr_upd_b64="$(base64 -w0 "${REPO_DIR}/vm/update/fclaude-headroom-update.sh")"
+_metrics_svc_b64="$(base64 -w0 "${REPO_DIR}/vm/metrics/fclaude-metrics.service")"
 _site_rendered="$(mktemp)"
 sed -e "s|__APT_UPGRADE_SH_B64__|${_apt_sh_b64}|g" \
     -e "s|__APT_UPGRADE_SERVICE_B64__|${_apt_svc_b64}|g" \
     -e "s|__APT_UPGRADE_TIMER_B64__|${_apt_tmr_b64}|g" \
+    -e "s|__HEADROOM_SERVICE_B64__|${_hr_svc_b64}|g" \
+    -e "s|__HEADROOM_QUIET_B64__|${_hr_quiet_b64}|g" \
+    -e "s|__HEADROOM_ACTIVATE_SH_B64__|${_hr_act_sh_b64}|g" \
+    -e "s|__HEADROOM_ACTIVATE_SERVICE_B64__|${_hr_act_svc_b64}|g" \
+    -e "s|__HEADROOM_UPDATE_SH_B64__|${_hr_upd_b64}|g" \
+    -e "s|__METRICS_SERVICE_B64__|${_metrics_svc_b64}|g" \
+    -e "s|__FCLAUDE_PROMETHEUS_VERSION__|${FCLAUDE_PROMETHEUS_VERSION}|g" \
     "${REPO_DIR}/vm/ansible/site.yml" >"$_site_rendered"
 ANSIBLE_SITE_B64="$(base64 -w0 "$_site_rendered")"
 rm -f "$_site_rendered"

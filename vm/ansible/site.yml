@@ -235,3 +235,100 @@
         enabled: true
         state: started
       when: (fclaude_update_apt | default('1')) | string == '1'
+
+    # --- Headroom context-compression proxy (in-VM) ---
+    # The fclaude wrappers launch Claude via `headroom-quiet wrap claude` against
+    # this shared proxy. Versioned venv + `current` symlink → hot-update-safe
+    # (see fclaude-headroom-activate). base64 assets injected by install.sh.
+    - name: Install python venv tooling for Headroom
+      ansible.builtin.apt:
+        name: [python3-venv, python3-pip]
+        state: present
+
+    - name: Install Headroom (headroom-ai[proxy]) into a versioned venv
+      ansible.builtin.shell: |
+        set -euo pipefail
+        ver="$(python3 - <<'PY'
+        import json, urllib.request
+        print(json.load(urllib.request.urlopen("https://pypi.org/pypi/headroom-ai/json", timeout=30))["info"]["version"])
+        PY
+        )"
+        dest="/opt/headroom/versions/${ver}"
+        if [ ! -x "${dest}/bin/headroom" ]; then
+          python3 -m venv "${dest}"
+          "${dest}/bin/pip" install -q --upgrade pip
+          "${dest}/bin/pip" install -q "headroom-ai[proxy]==${ver}"
+        fi
+        ln -sfn "${dest}" /opt/headroom/current
+        ln -sfn /opt/headroom/current/bin/headroom /usr/local/bin/headroom
+      args:
+        executable: /bin/bash
+        creates: /opt/headroom/current
+
+    - name: Install headroom-quiet shim (Click banner -> stderr, for stdio safety)
+      ansible.builtin.copy:
+        dest: /usr/local/bin/headroom-quiet
+        content: "{{ '__HEADROOM_QUIET_B64__' | b64decode }}"
+        mode: '0755'
+
+    - name: Install Headroom activate + update scripts
+      ansible.builtin.copy:
+        dest: "/usr/local/sbin/{{ item.name }}"
+        content: "{{ item.b64 | b64decode }}"
+        mode: '0755'
+      loop:
+        - { name: fclaude-headroom-activate, b64: '__HEADROOM_ACTIVATE_SH_B64__' }
+        - { name: fclaude-headroom-update.sh, b64: '__HEADROOM_UPDATE_SH_B64__' }
+
+    - name: Install Headroom systemd units
+      ansible.builtin.copy:
+        dest: "/etc/systemd/system/{{ item.name }}"
+        content: "{{ item.b64 | b64decode }}"
+        mode: '0644'
+      loop:
+        - { name: fclaude-headroom.service, b64: '__HEADROOM_SERVICE_B64__' }
+        - { name: fclaude-headroom-activate.service, b64: '__HEADROOM_ACTIVATE_SERVICE_B64__' }
+
+    - name: Enable + start Headroom (proxy + boot activation) when enabled
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        daemon_reload: true
+        enabled: true
+        state: started
+      loop:
+        - fclaude-headroom-activate.service
+        - fclaude-headroom.service
+      when: (fclaude_headroom_enable | default('1')) | string == '1'
+
+    # --- Metrics agent (prometheus --agent) — config + token delivered host-side ---
+    # by fclaude-metrics-setup (install.sh step 14). The unit is gated on those
+    # files existing, so it stays inactive until the secret lands.
+    - name: Install pinned prometheus (agent mode) binary
+      ansible.builtin.shell: |
+        set -euo pipefail
+        ver="__FCLAUDE_PROMETHEUS_VERSION__"
+        cd /tmp
+        curl -fsSL -o prom.tgz "https://github.com/prometheus/prometheus/releases/download/v${ver}/prometheus-${ver}.linux-amd64.tar.gz"
+        tar xzf prom.tgz
+        install -m755 "prometheus-${ver}.linux-amd64/prometheus" /usr/local/bin/prometheus
+        rm -rf prom.tgz "prometheus-${ver}.linux-amd64"
+      args:
+        executable: /bin/bash
+        creates: /usr/local/bin/prometheus
+      when: (fclaude_metrics_enable | default('1')) | string == '1'
+
+    - name: Install metrics agent unit (started later by fclaude-metrics-setup)
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/fclaude-metrics.service
+        content: "{{ '__METRICS_SERVICE_B64__' | b64decode }}"
+        mode: '0644'
+      when: (fclaude_metrics_enable | default('1')) | string == '1'
+
+    - name: Prepare metrics agent WAL dir (fclaude-owned)
+      ansible.builtin.file:
+        path: /var/lib/fclaude/prom-agent
+        state: directory
+        owner: "{{ fclaude_user }}"
+        group: "{{ fclaude_user }}"
+        mode: '0700'
+      when: (fclaude_metrics_enable | default('1')) | string == '1'
