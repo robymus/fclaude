@@ -76,8 +76,32 @@ does not apply.
 | `wrap_rtk_invocations_total` | RTK invocations observed via the `wrap` CLI tail |
 
 ## Dashboarding notes
-- **5-min scrape**: `rate()` over `[5m]`/`[10m]` on the `_total` counters works fine at this resolution.
-- **Averages, not quantiles**: use `_sum / _count` for latency/overhead means (no `_bucket` series exist).
+
+### `rate()` and the 5-minute scrape interval (important)
+The agent scrapes every **5 minutes**, so a series has one sample per 5 min. `rate()` / `irate()` /
+`increase()` need **at least 2 samples inside the range window**, so any window shorter than ~2× the
+scrape interval returns **no data**.
+
+This bites `$__rate_interval` specifically: Grafana derives it from the **datasource's** configured
+scrape interval (default **15s**), producing a 15s–1m window — far too short for 5-min data → empty
+graphs even though the raw counter has values.
+
+Fix it one of two ways:
+- **Preferred — set the datasource scrape interval.** Grafana Cloud → the Prometheus datasource →
+  **Settings → "Scrape interval" = `5m`**. Then `$__rate_interval` auto-sizes to `max(4 × 5m, …) = 20m`
+  and `rate(headroom_requests_total[$__rate_interval])` works everywhere.
+- **Or use an explicit window ≥ ~3× the scrape:** `rate(headroom_requests_total[15m])` (or `[20m]`).
+  A `[5m]` window is exactly one scrape interval → only 0–1 samples → flaky/empty; use `[15m]`+.
+
+For totals instead of per-second rates, prefer the raw cumulative counter (`headroom_requests_total`)
+or `increase(headroom_requests_total[$__range])`.
+
+If per-second granularity matters more than active-series/DPM cost, drop `scrape_interval` to `1m` in
+`vm/metrics/prometheus.yml.tmpl` (and re-run `./host/bin/fclaude-metrics-setup`).
+
+### Other notes
+- **Averages, not quantiles**: use `_sum / _count` for latency/overhead means (no `_bucket` series exist),
+  e.g. `rate(headroom_latency_ms_sum[15m]) / rate(headroom_latency_ms_count[15m])`.
 - **Headline savings tiles**: use the cumulative `headroom_persistent_savings_*` counters directly.
 - **Labels**: every series carries `host` / `vm` (from `FCLAUDE_METRICS_HOST_LABEL` /
   `FCLAUDE_METRICS_VM_LABEL`), so multiple VMs/hosts pushing to the same Grafana Cloud stack stay
