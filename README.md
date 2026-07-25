@@ -80,6 +80,35 @@ Set the Claude extension's **`claudeCode.claudeProcessWrapper`** setting to
 `~/.local/bin/fclaude-vscode`, and enable skip-permissions in the extension's own settings. The
 wrapper handles VM startup, mounting, and cleanup automatically.
 
+## Headroom proxy + Grafana Cloud metrics
+
+Claude in the VM runs through **[Headroom](https://github.com/headroomlabs-ai/headroom)**, a
+context-compression proxy, launched via `headroom-quiet wrap claude` (a shim that keeps its banner off
+stdout so the VS Code stdio protocol stays intact). One shared proxy service serves every session, and
+its Prometheus metrics are shipped to **Grafana Cloud**.
+
+- **Proxy:** a persistent `fclaude-headroom.service` in the VM (loopback `:8787`). The wrappers set
+  `ANTHROPIC_MODEL=<FCLAUDE_HEADROOM_MODEL>[1m]` + `--1m` so the **1M context window** stays active on
+  your chosen model (default `claude-opus-5`). `FCLAUDE_HEADROOM_ENABLE=0` bypasses Headroom entirely.
+- **Updates:** a newer Headroom is *staged* weekly (alongside the apt run) into a versioned venv and
+  only activated at boot or when no session is running — the live proxy is never restarted under load.
+- **Metrics:** an in-VM `prometheus --agent` scrapes `:8787/metrics` every 5 min and `remote_write`s to
+  Grafana Cloud, labelled `host=<FCLAUDE_METRICS_HOST_LABEL>` / `vm=<FCLAUDE_METRICS_VM_LABEL>`.
+  Credentials live in a **SOPS**-encrypted secret (`secrets/secrets.sops.yaml`, age recipients in
+  `.sops.yaml`) and are delivered to the VM host-side — the age key never enters the sandbox.
+
+Re-apply the metrics secret/config to the running VM (or retrofit a pre-existing VM) with:
+
+```bash
+./host/bin/fclaude-metrics-setup
+```
+
+Knobs (in `~/.fclaude/config`): `FCLAUDE_HEADROOM_ENABLE`, `FCLAUDE_HEADROOM_MODEL`,
+`FCLAUDE_METRICS_ENABLE`, `FCLAUDE_METRICS_HOST_LABEL`, `FCLAUDE_METRICS_VM_LABEL`.
+
+The exported metric names are catalogued in
+[docs/HEADROOM-METRICS.md](docs/HEADROOM-METRICS.md).
+
 ## Grow the disk
 
 ```bash
@@ -99,11 +128,14 @@ fclaude-grow-disk 64G      # grows the file, partition, and filesystem online
 | `install.sh` / `uninstall.sh` | host orchestrators |
 | `lib/common.sh` | shared bash: config, ssh, locking, refcount, mounting |
 | `lib/constants.sh` | single source of truth for IPs/paths/names |
-| `host/bin/` | `fclaude`, `fclaude-vscode`, `fclaude-grow-disk`, `fclaude-update-setup` |
+| `host/bin/` | `fclaude`, `fclaude-vscode`, `fclaude-grow-disk`, `fclaude-update-setup`, `fclaude-metrics-setup` |
 | `host/nftables/` | host firewall ruleset template |
 | `host/systemd/` | export-root restore unit |
 | `vm/cloud-init/` | first-boot user/ssh/ansible bootstrap |
 | `vm/libvirt/` | domain XML template |
 | `vm/ansible/` | in-VM provisioning playbook |
-| `vm/update/` | weekly apt-upgrade script + systemd timer (network-gated) |
+| `vm/headroom/` | Headroom proxy service, activate/quiet shim, boot-activation unit |
+| `vm/metrics/` | prometheus-agent config template + metrics service unit |
+| `vm/update/` | weekly apt-upgrade + Headroom-staging scripts + systemd timer (network-gated) |
+| `secrets/` | SOPS-encrypted Grafana Cloud creds (`.sops.yaml` recipients) |
 | `test/` | unit tests (`bash test/test-staleness.sh`) |

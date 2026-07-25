@@ -109,18 +109,21 @@ ensure_vm_running
 
 # Warn (best-effort) if updates have silently stalled — never blocks the session.
 ( set +e; fclaude_staleness_warn ) || true
+# If a newer Headroom is staged and no session is running, activate it now.
+( set +e; headroom_activate_if_idle ) || true
 
 extra=""
 if ((${#CLAUDE_ARGS[@]})); then
   extra="$(printf '%q ' "${CLAUDE_ARGS[@]}")"
 fi
 
+launch="$(_headroom_launch)"
 if [[ "$DO_MOUNT" == 1 ]]; then
   rel="$(relpath_under_home "$DIR")"
   abs="$(cd "$DIR" && pwd -P)"
   mount_workspace "$abs"
   trap 'unmount_workspace "$abs"' EXIT
-  ssh_vm_tty "${CLAUDE_LOGIN_ENV} cd ${VM_MOUNT_BASE%/}/${rel} && exec claude --dangerously-skip-permissions ${extra}"
+  ssh_vm_tty "${CLAUDE_LOGIN_ENV} cd ${VM_MOUNT_BASE%/}/${rel} && exec ${launch} --dangerously-skip-permissions ${extra}"
 else
-  ssh_vm_tty "${CLAUDE_LOGIN_ENV} cd ${VM_MOUNT_BASE} && exec claude --dangerously-skip-permissions ${extra}"
+  ssh_vm_tty "${CLAUDE_LOGIN_ENV} cd ${VM_MOUNT_BASE} && exec ${launch} --dangerously-skip-permissions ${extra}"
 fi

@@ -94,12 +94,43 @@ ssh_vm() {
   ssh -n "${opts[@]}" "${SSH_USER}@${VM_IP}" "$@"
 }
 
-# The guest reaches the host's llm.log proxy via the host-side gateway bridge
-# (fclaude-llmlog.socket: HOST_IP:port -> 127.0.0.1:port), so the VM just points
-# HTTPS_PROXY at HOST_IP and no per-session ssh forward is needed. (Earlier this
-# used `ssh -R`, but that installs a single exclusive listener in the VM:
-# concurrent sessions collide on the bind, and the listener's owner blocks on
-# exit waiting for the other session's forwarded connections to drain.)
+# Headroom launch prefix for the wrappers. Claude is launched via `headroom-quiet
+# wrap claude` so its API traffic is compressed + measured by the shared in-VM
+# proxy. `headroom-quiet` is a Click-banner-to-stderr shim so stdout stays clean —
+# this is what lets BOTH the interactive (PTY) and the VS Code (stdio JSON) paths
+# use `wrap`. Emits the command word(s) that PRECEDE the claude args; the caller
+# does `… && exec $(_headroom_launch) <claude-args>`.
+#   FCLAUDE_HEADROOM_ENABLE=0 → plain `claude` (bypass Headroom).
+#   FCLAUDE_HEADROOM_MODEL set → `env ANTHROPIC_MODEL=<m>` + `--1m` (1M context on
+#     that model; the env survives `exec` via `env`, and overrides settings.json).
+# `--no-proxy` reuses the persistent fclaude-headroom.service; `--` passes every
+# following arg straight to claude.
+_headroom_launch() {
+  if [[ "${FCLAUDE_HEADROOM_ENABLE:-1}" != "1" ]]; then
+    printf 'claude'
+    return
+  fi
+  if [[ -n "${FCLAUDE_HEADROOM_MODEL:-}" ]]; then
+    printf 'env ANTHROPIC_MODEL=%q headroom-quiet wrap claude --1m --no-proxy --' "$FCLAUDE_HEADROOM_MODEL"
+  else
+    printf 'headroom-quiet wrap claude --no-proxy --'
+  fi
+}
+
+# Activate a newer STAGED Headroom version, but only when this is the "first
+# instance" (no Claude running in the VM) so a proxy restart never disrupts a live
+# session. Best-effort and cheap; safe to call on every session start. Guarded by a
+# host-side flock so two concurrent first-starts don't both restart.
+headroom_activate_if_idle() {
+  [[ "${FCLAUDE_HEADROOM_ENABLE:-1}" == "1" ]] || return 0
+  with_lock "headroom-activate" _headroom_activate_if_idle
+}
+_headroom_activate_if_idle() {
+  # `pgrep -x claude` in the VM: if none, we're the first instance → safe to swap.
+  if ! ssh_vm 'pgrep -x claude >/dev/null 2>&1'; then
+    ssh_vm 'sudo /usr/local/sbin/fclaude-headroom-activate >/dev/null 2>&1' || true
+  fi
+}
 
 # Run a command in the VM with a PTY (for interactive claude / shells).
 ssh_vm_tty() {

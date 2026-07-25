@@ -1,0 +1,22 @@
+# fclaude metrics agent config (prometheus --agent). Rendered by
+# host/bin/fclaude-metrics-setup: the remote_write url + username come from the
+# SOPS secret; the labels come from the fclaude config. The remote_write token is
+# NOT rendered here — it is delivered to /etc/fclaude/gc_token (referenced below).
+global:
+  scrape_interval: 5m
+  scrape_timeout: 1m
+  external_labels:
+    host: __FCLAUDE_METRICS_HOST_LABEL__
+    vm: __FCLAUDE_METRICS_VM_LABEL__
+
+scrape_configs:
+  - job_name: headroom
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['127.0.0.1:8787']
+
+remote_write:
+  - url: __GC_PROM_URL__
+    basic_auth:
+      username: __GC_PROM_USER__
+      password_file: /etc/fclaude/gc_token

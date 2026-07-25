@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# fclaude-metrics-setup — decrypt the Grafana Cloud secret on the host and deliver
+# it + the rendered prometheus.yml into the VM's metrics agent (prometheus --agent),
+# then (re)start it. The age private key never leaves the host; only the derived
+# token/config reach the VM.
+#
+# Run from a repo checkout as your normal user:
+#   ./host/bin/fclaude-metrics-setup
+#
+# Idempotent. Requires: sops + the age key, secrets/secrets.sops.yaml, and the
+# prometheus binary already installed in the VM (site.yml / migration).
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+if [[ -r "${REPO_DIR}/lib/common.sh" ]]; then
+  # shellcheck source=../../lib/common.sh
+  source "${REPO_DIR}/lib/common.sh"
+else
+  # shellcheck source=/dev/null
+  source "${FCLAUDE_LIB_DIR:-$HOME/.local/lib/fclaude}/common.sh"
+fi
+load_config
+
+SECRET="${REPO_DIR}/secrets/secrets.sops.yaml"
+TMPL="${REPO_DIR}/vm/metrics/prometheus.yml.tmpl"
+UNIT="${REPO_DIR}/vm/metrics/fclaude-metrics.service"
+
+ensure_vm_running
+
+# ssh that KEEPS stdin (ssh_vm uses -n); needed to stream secrets over stdin.
+ssh_in() {
+  local -a opts=()
+  mapfile -d '' -t opts < <(_ssh_opts)
+  # shellcheck disable=SC2029  # command is intentionally assembled on the client
+  ssh "${opts[@]}" "${SSH_USER}@${VM_IP}" "$@"
+}
+scp_vm() { local -a o=(); mapfile -d '' -t o < <(_ssh_opts); scp "${o[@]}" "$@"; }
+
+# --- Disabled? tear the agent down and stop. ---
+if [[ "${FCLAUDE_METRICS_ENABLE:-1}" != "1" ]]; then
+  info "FCLAUDE_METRICS_ENABLE=0 — disabling the metrics agent"
+  ssh_vm 'sudo systemctl disable --now fclaude-metrics.service >/dev/null 2>&1 || true'
+  exit 0
+fi
+
+[[ -f "$SECRET" ]]  || die "missing $SECRET (create + fill it, see secrets/README.md)"
+[[ -r "$TMPL" ]]    || die "missing $TMPL"
+command -v sops >/dev/null 2>&1 || die "sops not installed on the host"
+
+info "decrypting Grafana Cloud creds from the SOPS secret"
+url="$(sops -d --extract '["gc_prom_url"]'  "$SECRET")"
+user="$(sops -d --extract '["gc_prom_user"]' "$SECRET")"
+[[ -n "$url" && -n "$user" ]] || die "gc_prom_url / gc_prom_user missing from the secret"
+
+# Render prometheus.yml (url/user/labels). '|' delimiter: safe for URLs.
+rendered="$(sed \
+  -e "s|__GC_PROM_URL__|${url}|g" \
+  -e "s|__GC_PROM_USER__|${user}|g" \
+  -e "s|__FCLAUDE_METRICS_HOST_LABEL__|${FCLAUDE_METRICS_HOST_LABEL:-darkness}|g" \
+  -e "s|__FCLAUDE_METRICS_VM_LABEL__|${FCLAUDE_METRICS_VM_LABEL:-fclaude}|g" \
+  "$TMPL")"
+
+info "delivering token + config into the VM"
+ssh_vm 'sudo install -d -m755 /etc/fclaude'
+# Token: fclaude-readable (the agent runs as fclaude), mode 600.
+sops -d --extract '["gc_prom_token"]' "$SECRET" \
+  | ssh_in 'sudo install -m600 -o fclaude -g fclaude /dev/stdin /etc/fclaude/gc_token'
+printf '%s\n' "$rendered" \
+  | ssh_in 'sudo install -m644 /dev/stdin /etc/fclaude/prometheus.yml'
+# Agent WAL dir, owned by fclaude.
+ssh_vm 'sudo install -d -m700 -o fclaude -g fclaude /var/lib/fclaude/prom-agent'
+# Install/refresh the unit (idempotent; also covers a pre-existing VM).
+scp_vm "$UNIT" "${SSH_USER}@${VM_IP}:/tmp/fclaude-metrics.service"
+ssh_vm 'sudo install -m644 /tmp/fclaude-metrics.service /etc/systemd/system/fclaude-metrics.service && rm -f /tmp/fclaude-metrics.service'
+
+info "enabling + (re)starting the metrics agent"
+ssh_vm 'sudo systemctl daemon-reload && sudo systemctl enable --now fclaude-metrics.service && sudo systemctl restart fclaude-metrics.service'
+sleep 3
+ssh_vm 'systemctl is-active fclaude-metrics.service; sudo journalctl -u fclaude-metrics --no-pager -n 6 | tail -6' || true
+
+info "fclaude-metrics-setup done. (remote_write pushes every 5m; check Grafana Cloud shortly.)"

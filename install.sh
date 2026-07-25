@@ -107,10 +107,23 @@ export HOME FCLAUDE_PUBKEY MAINT_PUBKEY
 _apt_sh_b64="$(base64 -w0 "${REPO_DIR}/vm/update/fclaude-apt-upgrade.sh")"
 _apt_svc_b64="$(base64 -w0 "${REPO_DIR}/vm/update/fclaude-apt-upgrade.service")"
 _apt_tmr_b64="$(base64 -w0 "${REPO_DIR}/vm/update/fclaude-apt-upgrade.timer")"
+_hr_svc_b64="$(base64 -w0 "${REPO_DIR}/vm/headroom/fclaude-headroom.service")"
+_hr_quiet_b64="$(base64 -w0 "${REPO_DIR}/vm/headroom/headroom-quiet")"
+_hr_act_sh_b64="$(base64 -w0 "${REPO_DIR}/vm/headroom/fclaude-headroom-activate.sh")"
+_hr_act_svc_b64="$(base64 -w0 "${REPO_DIR}/vm/headroom/fclaude-headroom-activate.service")"
+_hr_upd_b64="$(base64 -w0 "${REPO_DIR}/vm/update/fclaude-headroom-update.sh")"
+_metrics_svc_b64="$(base64 -w0 "${REPO_DIR}/vm/metrics/fclaude-metrics.service")"
 _site_rendered="$(mktemp)"
 sed -e "s|__APT_UPGRADE_SH_B64__|${_apt_sh_b64}|g" \
     -e "s|__APT_UPGRADE_SERVICE_B64__|${_apt_svc_b64}|g" \
     -e "s|__APT_UPGRADE_TIMER_B64__|${_apt_tmr_b64}|g" \
+    -e "s|__HEADROOM_SERVICE_B64__|${_hr_svc_b64}|g" \
+    -e "s|__HEADROOM_QUIET_B64__|${_hr_quiet_b64}|g" \
+    -e "s|__HEADROOM_ACTIVATE_SH_B64__|${_hr_act_sh_b64}|g" \
+    -e "s|__HEADROOM_ACTIVATE_SERVICE_B64__|${_hr_act_svc_b64}|g" \
+    -e "s|__HEADROOM_UPDATE_SH_B64__|${_hr_upd_b64}|g" \
+    -e "s|__METRICS_SERVICE_B64__|${_metrics_svc_b64}|g" \
+    -e "s|__FCLAUDE_PROMETHEUS_VERSION__|${FCLAUDE_PROMETHEUS_VERSION}|g" \
     "${REPO_DIR}/vm/ansible/site.yml" >"$_site_rendered"
 ANSIBLE_SITE_B64="$(base64 -w0 "$_site_rendered")"
 rm -f "$_site_rendered"
@@ -121,17 +134,12 @@ RENDER_VARS=(
   FCLAUDE_MAINT_USER FCLAUDE_VM_IP FCLAUDE_HOST_IP FCLAUDE_VM_MAC FCLAUDE_VM_MEM_GIB
   FCLAUDE_VM_VCPU FCLAUDE_VM_MTU FCLAUDE_VM_CPU_MODEL FCLAUDE_LIBVIRT_NET FCLAUDE_VM_HOME
   FCLAUDE_VM_ANSIBLE_DIR FCLAUDE_SUBNET_CIDR FCLAUDE_PUBKEY MAINT_PUBKEY ANSIBLE_SITE_B64
-  USER FCLAUDE_LLMLOG_PORT FCLAUDE_SOCKET_PROXYD
+  USER
   FCLAUDE_UPDATE_APT FCLAUDE_UPDATE_MIN_MBIT FCLAUDE_UPDATE_PROBE_URL
   FCLAUDE_UPDATE_PROBE_MAXTIME FCLAUDE_UPDATE_WARN_DAYS
+  FCLAUDE_HEADROOM_ENABLE FCLAUDE_HEADROOM_PORT FCLAUDE_HEADROOM_MODEL
+  FCLAUDE_METRICS_ENABLE FCLAUDE_METRICS_HOST_LABEL FCLAUDE_METRICS_VM_LABEL
 )
-
-# Locate systemd-socket-proxyd for the llm.log gateway bridge (path varies with
-# usrmerge). Empty if absent — the bridge step below is then skipped.
-FCLAUDE_SOCKET_PROXYD=""
-for _p in /usr/lib/systemd/systemd-socket-proxyd /lib/systemd/systemd-socket-proxyd; do
-  [[ -x "$_p" ]] && { FCLAUDE_SOCKET_PROXYD="$_p"; break; }
-done
 
 # ===========================================================================
 step "6/14Build cloud-init seed"
@@ -268,31 +276,15 @@ sudo install -d -m 755 /etc/systemd/system/nfs-server.service.d
 sudo install -m 644 "${REPO_DIR}/host/systemd/nfs-server-after-libvirt.conf" \
   /etc/systemd/system/nfs-server.service.d/fclaude.conf
 
-# llm.log gateway bridge: a socket-activated proxy on HOST_IP:PORT -> host
-# 127.0.0.1:PORT so the guest reaches llm.log over the NAT (no per-session ssh
-# -R). Only when the integration is enabled and systemd-socket-proxyd exists.
-if [[ -n "${FCLAUDE_LLMLOG_PORT}" && -n "${FCLAUDE_SOCKET_PROXYD}" ]]; then
-  tmpf="$(mktemp)"; render "${REPO_DIR}/host/systemd/fclaude-llmlog.socket" "$tmpf"
-  sudo install -m 644 "$tmpf" /etc/systemd/system/fclaude-llmlog.socket; rm -f "$tmpf"
-  tmpf="$(mktemp)"; render "${REPO_DIR}/host/systemd/fclaude-llmlog.service" "$tmpf"
-  sudo install -m 644 "$tmpf" /etc/systemd/system/fclaude-llmlog.service; rm -f "$tmpf"
-elif [[ -n "${FCLAUDE_LLMLOG_PORT}" ]]; then
-  warn "systemd-socket-proxyd not found; skipping llm.log gateway bridge."
-fi
-
 sudo systemctl daemon-reload
 sudo systemctl enable fclaude-exports.service fclaude-firewall.service >/dev/null 2>&1 || true
-if [[ -n "${FCLAUDE_LLMLOG_PORT}" && -n "${FCLAUDE_SOCKET_PROXYD}" ]]; then
-  sudo systemctl enable fclaude-llmlog.socket >/dev/null 2>&1 || true
-  sudo systemctl restart fclaude-llmlog.socket >/dev/null 2>&1 || true
-fi
 info "boot-persistence units enabled."
 
 # ===========================================================================
 step "11/14Install wrappers + library"
 install -m 644 "${REPO_DIR}/lib/common.sh"    "${FCLAUDE_LIB_DIR}/common.sh"
 install -m 644 "${REPO_DIR}/lib/constants.sh" "${FCLAUDE_LIB_DIR}/constants.sh"
-for w in fclaude fclaude-vscode fclaude-grow-disk fclaude-update-setup; do
+for w in fclaude fclaude-vscode fclaude-grow-disk fclaude-update-setup fclaude-metrics-setup; do
   install -m 755 "${REPO_DIR}/host/bin/${w}" "${FCLAUDE_BIN_DIR}/${w}"
 done
 info "wrappers installed to $FCLAUDE_BIN_DIR"
@@ -335,39 +327,19 @@ ssh "${SSH_OPTS[@]}" "${FCLAUDE_VM_USER}@${FCLAUDE_VM_IP}" 'test -f /var/lib/fcl
   && info "VM provisioned successfully." || true
 
 # ===========================================================================
-step "14/14  llm.log proxy integration (optional)"
-# If the host runs llm.log (an HTTPS-logging proxy bound to host loopback), route
-# claude in the VM through it. A HOST-RUN ansible playbook copies the CA certs
-# into the VM (ansible.builtin.copy reads them from the host's ~/.llm.log) and
-# sets the proxy/CA env vars pointing at the gateway bridge installed in step 10
-# (fclaude-llmlog.socket). Skipped when llm.log certs or ansible-playbook are
-# absent on the host.
-if [[ -n "${FCLAUDE_LLMLOG_PORT}" \
-      && -f "${FCLAUDE_LLMLOG_HOST_DIR}/ca.pem" \
-      && -f "${FCLAUDE_LLMLOG_HOST_DIR}/ca-bundle.pem" ]]; then
-  if command -v ansible-playbook >/dev/null 2>&1; then
-    info "installing llm.log CA + proxy env into the VM (host-run ansible)..."
-    # NB: attached -o form (no space). ansible-core 2.19 parses ssh_common_args
-    # with argparse and the space-separated '-o Foo=bar' form crashes the worker
-    # ("argument -o: expected one argument"); '-oFoo=bar' avoids it.
-    ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook \
-      -i "${FCLAUDE_VM_IP}," \
-      -u "${FCLAUDE_VM_USER}" \
-      --private-key "${FCLAUDE_SSH_KEY}" \
-      -e 'ansible_ssh_common_args=-oUserKnownHostsFile=/dev/null -oStrictHostKeyChecking=no' \
-      -e "llmlog_host_dir=${FCLAUDE_LLMLOG_HOST_DIR}" \
-      -e "llmlog_vm_dir=${FCLAUDE_LLMLOG_VM_DIR}" \
-      -e "llmlog_port=${FCLAUDE_LLMLOG_PORT}" \
-      -e "llmlog_gateway=${FCLAUDE_HOST_IP}" \
-      -e "env_home=${HOME}" \
-      "${REPO_DIR}/vm/ansible/llmlog.yml" \
-      && info "llm.log integration installed." \
-      || warn "llm.log playbook failed; see ansible output above."
-  else
-    warn "ansible-playbook not on host; skipping llm.log integration (install ansible to enable)."
-  fi
+step "14/14  Grafana Cloud metrics secret delivery (optional)"
+# Decrypt the SOPS secret on the host and deliver the Grafana Cloud creds +
+# rendered prometheus.yml into the VM's in-VM metrics agent. Delegated to the
+# standalone fclaude-metrics-setup (also re-runnable on its own). Skipped when
+# metrics are disabled, the secret is missing, or sops isn't installed.
+if [[ "${FCLAUDE_METRICS_ENABLE}" == "1" && -f "${REPO_DIR}/secrets/secrets.sops.yaml" ]] \
+   && command -v sops >/dev/null 2>&1; then
+  info "delivering Grafana Cloud metrics secret to the VM..."
+  "${REPO_DIR}/host/bin/fclaude-metrics-setup" \
+    && info "metrics agent configured." \
+    || warn "metrics setup failed; re-run ./host/bin/fclaude-metrics-setup after fixing (e.g. fill the token)."
 else
-  info "llm.log not detected on host (${FCLAUDE_LLMLOG_HOST_DIR}); skipping proxy integration."
+  info "metrics disabled or secret/sops absent; skipping metrics setup."
 fi
 
 # ===========================================================================
