@@ -63,6 +63,18 @@ FCLAUDE_LIB_DIR="${HOME}/.local/lib/fclaude"
 FCLAUDE_VM_HOME="/home/fclaude"
 FCLAUDE_VM_ANSIBLE_DIR="/var/lib/fclaude/ansible"
 
+# --- Automatic updates ---
+# Claude Code itself is installed via the native installer (per-user, under
+# ~/.local of the fclaude account) and keeps itself current through its own
+# background auto-updater on the `latest` channel — no host machinery needed.
+# These knobs govern the OPTIONAL weekly apt/system-package upgrade (a systemd
+# timer in the VM) and the session-start staleness warning printed by `fclaude`.
+FCLAUDE_UPDATE_APT="1"            # 1 = weekly apt upgrade in the VM (Docker/OS/Node); 0 = off
+FCLAUDE_UPDATE_MIN_MBIT="100"     # skip the weekly apt run if measured downlink < this (Mbit/s)
+FCLAUDE_UPDATE_PROBE_URL="https://speed.cloudflare.com/__down?bytes=10000000"  # size-capped speed probe
+FCLAUDE_UPDATE_PROBE_MAXTIME="5"  # seconds; also time-caps the probe so slow links transfer little
+FCLAUDE_UPDATE_WARN_DAYS="15"     # `fclaude` warns at startup if the last SUCCESSFUL update is older
+
 # --- llm.log proxy integration (optional) ---
 # llm.log runs on the host, listening on host loopback only (hard-coded). When
 # its CA certs exist at $FCLAUDE_LLMLOG_HOST_DIR, install.sh copies them into the

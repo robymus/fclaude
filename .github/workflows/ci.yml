@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install shellcheck + ansible-core
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y shellcheck
+          python3 -m pip install --quiet ansible-core
+
+      - name: Shellcheck (all shell scripts)
+        run: |
+          shellcheck -x \
+            install.sh uninstall.sh \
+            lib/*.sh \
+            host/bin/fclaude host/bin/fclaude-vscode host/bin/fclaude-grow-disk \
+            host/bin/fclaude-llmlog-setup host/bin/fclaude-update-setup \
+            vm/update/*.sh \
+            test/*.sh
+
+      - name: Unit tests
+        run: bash test/test-staleness.sh
+
+      - name: Ansible syntax-check (rendered playbook)
+        run: |
+          # Mirror install.sh's base64 injection of the vm/update assets, then
+          # syntax-check the rendered playbook.
+          apt_sh_b64="$(base64 -w0 vm/update/fclaude-apt-upgrade.sh)"
+          apt_svc_b64="$(base64 -w0 vm/update/fclaude-apt-upgrade.service)"
+          apt_tmr_b64="$(base64 -w0 vm/update/fclaude-apt-upgrade.timer)"
+          rendered="$(mktemp --suffix=.yml)"
+          sed -e "s|__APT_UPGRADE_SH_B64__|${apt_sh_b64}|g" \
+              -e "s|__APT_UPGRADE_SERVICE_B64__|${apt_svc_b64}|g" \
+              -e "s|__APT_UPGRADE_TIMER_B64__|${apt_tmr_b64}|g" \
+              vm/ansible/site.yml > "$rendered"
+          ansible-playbook --syntax-check -i localhost, "$rendered"

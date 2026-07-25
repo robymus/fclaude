@@ -61,7 +61,10 @@
         enabled: true
         state: started
 
-    # --- Node.js + Claude Code ---
+    # --- Node.js (for the agent's own project work, NOT for Claude Code) ---
+    # Claude Code no longer runs on Node (it's a self-contained native binary,
+    # installed below). Node stays because a general dev sandbox needs node/npm
+    # for user projects; it is kept current by the weekly apt upgrade timer.
     - name: Check for node
       ansible.builtin.stat:
         path: /usr/bin/node
@@ -79,11 +82,39 @@
         state: present
         update_cache: true
 
-    - name: Install Claude Code globally
-      community.general.npm:
-        name: "@anthropic-ai/claude-code"
-        global: true
-        state: present
+    # --- Claude Code (native installer; per-user, hot-update-safe) ---
+    # The native installer keeps per-version dirs under
+    # ~/.local/share/claude/versions and atomically swaps ~/.local/bin/claude, so
+    # its background auto-updater can update while sessions run. Installed AS the
+    # fclaude user (never root) so ~/.local is user-owned and self-update works.
+    # PATH resolution for non-interactive ssh is handled by ~/.profile (which
+    # Ubuntu points at ~/.local/bin) + the wrapper's CLAUDE_LOGIN_ENV.
+    - name: Install Claude Code via the native installer (latest channel)
+      become: true
+      become_user: "{{ fclaude_user }}"
+      ansible.builtin.shell: |
+        set -o pipefail
+        curl -fsSL https://claude.ai/install.sh | bash
+      args:
+        creates: "/home/{{ fclaude_user }}/.local/bin/claude"
+        executable: /bin/bash
+
+    - name: Pin Claude Code to the latest auto-update channel (merge, don't clobber)
+      become: true
+      become_user: "{{ fclaude_user }}"
+      ansible.builtin.shell: |
+        set -e
+        f="$HOME/.claude/settings.json"
+        mkdir -p "$HOME/.claude"
+        if [ -s "$f" ]; then
+          tmp="$(mktemp)"
+          jq '. + {autoUpdatesChannel: "latest"}' "$f" > "$tmp" && mv "$tmp" "$f"
+        else
+          printf '{\n  "autoUpdatesChannel": "latest"\n}\n' > "$f"
+        fi
+      args:
+        executable: /bin/bash
+      changed_when: false   # idempotent merge; avoids false "changed" churn
 
     # --- Headless browser runtime libs (infra only; NO browser installed) ---
     - name: Install headless-chrome runtime dependencies
@@ -142,3 +173,65 @@
         - host_user is defined
         - host_user | length > 0
         - host_user != fclaude_user
+
+    # --- Weekly apt/system-package upgrade (optional; network-speed gated) ---
+    # Claude Code updates itself (native auto-updater); this timer keeps apt /
+    # Docker / Node current. The script + units are the canonical files under
+    # vm/update/, injected here as base64 by install.sh's render step (the whole
+    # playbook is shipped base64-embedded in the cloud-init seed, so it can't read
+    # external files at first boot — hence the placeholders).
+    - name: Install the weekly apt-upgrade script
+      ansible.builtin.copy:
+        dest: /usr/local/sbin/fclaude-apt-upgrade.sh
+        content: "{{ '__APT_UPGRADE_SH_B64__' | b64decode }}"
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Install the apt-upgrade systemd service
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/fclaude-apt-upgrade.service
+        content: "{{ '__APT_UPGRADE_SERVICE_B64__' | b64decode }}"
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Install the apt-upgrade systemd timer
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/fclaude-apt-upgrade.timer
+        content: "{{ '__APT_UPGRADE_TIMER_B64__' | b64decode }}"
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Configure the weekly apt-upgrade defaults (EnvironmentFile)
+      ansible.builtin.copy:
+        dest: /etc/default/fclaude-update
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          # fclaude weekly apt upgrade — read by /usr/local/sbin/fclaude-apt-upgrade.sh
+          # Re-apply host-side knobs with: ./host/bin/fclaude-update-setup
+          FCLAUDE_UPDATE_APT={{ fclaude_update_apt | default('1') }}
+          # Network gate (uncomment to override the script's built-in defaults):
+          # FCLAUDE_UPDATE_MIN_MBIT=100
+          # FCLAUDE_UPDATE_PROBE_URL=https://speed.cloudflare.com/__down?bytes=10000000
+          # FCLAUDE_UPDATE_PROBE_MAXTIME=5
+
+    - name: Seed the last-successful-update stamp (starts the staleness clock at provision time)
+      ansible.builtin.shell: |
+        set -e
+        mkdir -p /var/lib/fclaude
+        [ -f /var/lib/fclaude/last-apt-success ] || date -Is > /var/lib/fclaude/last-apt-success
+      args:
+        executable: /bin/bash
+        creates: /var/lib/fclaude/last-apt-success
+
+    - name: Enable + start the weekly apt-upgrade timer
+      ansible.builtin.systemd:
+        name: fclaude-apt-upgrade.timer
+        daemon_reload: true
+        enabled: true
+        state: started
+      when: (fclaude_update_apt | default('1')) | string == '1'

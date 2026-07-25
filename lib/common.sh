@@ -75,6 +75,7 @@ _ssh_opts() {
 # profile configures (nvm, a different prefix, …) is respected. Sourced in the
 # SAME shell (one parse), so %q-quoted claude args appended after it stay intact.
 # Single-quoted so $HOME is expanded by the VM shell, not the host.
+# shellcheck disable=SC2016  # intentional: the VM shell expands $HOME, not us
 CLAUDE_LOGIN_ENV='[ -f "$HOME/.profile" ] && . "$HOME/.profile";'
 
 # Run a command in the VM, no PTY (for scripted/stdio use).
@@ -188,6 +189,14 @@ fclaude_status() {
     df="$(ssh_vm 'df -h /' 2>/dev/null | awk 'NR==2{print $3" "$2" "$5}' || true)"
     [[ -n "$df" ]] && printf '  Guest /:     %s used of %s (%s)\n' \
       "$(awk '{print $1}' <<<"$df")" "$(awk '{print $2}' <<<"$df")" "$(awk '{print $3}' <<<"$df")"
+
+    # Update status (best-effort): installed Claude version + last weekly apt run.
+    local cver apt
+    # shellcheck disable=SC2016  # intentional: the VM shell sources its own ~/.profile
+    cver="$(ssh_vm '[ -f "$HOME/.profile" ] && . "$HOME/.profile"; claude --version 2>/dev/null' 2>/dev/null || true)"
+    [[ -n "$cver" ]] && printf '  Claude:      %s\n' "$cver"
+    apt="$(ssh_vm 'cat /var/lib/fclaude/last-apt-upgrade 2>/dev/null' 2>/dev/null || true)"
+    [[ -n "$apt" ]] && printf '  Last apt:    %s\n' "$apt"
   fi
 
   printf '\nActive workspaces (host bind mounts):\n'
@@ -199,6 +208,100 @@ fclaude_status() {
     found=1
   done < <(findmnt -rno TARGET 2>/dev/null | grep "^${EXPORTS_ROOT%/}/" || true)
   ((found)) || printf '  (none)\n'
+}
+
+# ---------------------------------------------------------------------------
+# Updates — on-demand + session-start staleness warning (plan: auto-update)
+# ---------------------------------------------------------------------------
+# Claude Code updates itself via the native installer's background auto-updater;
+# apt/system packages are refreshed by a weekly, network-gated systemd timer in
+# the VM. These helpers let the user force an update now and get warned at
+# session start if updates have silently stalled.
+
+# On-demand: update Claude Code and system packages right now, bypassing the
+# weekly apt run's network-speed gate (an explicit request means bandwidth is
+# the user's call). Streams output over a PTY.
+fclaude_update() {
+  ensure_vm_running
+  info "updating Claude Code (native auto-updater, on demand)..."
+  ssh_vm_tty "${CLAUDE_LOGIN_ENV} claude update" \
+    || warn "claude update returned non-zero (already latest is reported as success)"
+  info "updating system packages (apt; network gate bypassed)..."
+  ssh_vm_tty "sudo env FCLAUDE_UPDATE_FORCE=1 /usr/local/sbin/fclaude-apt-upgrade.sh" \
+    || warn "apt upgrade returned non-zero (see /var/log/fclaude-apt-upgrade.log in the VM)"
+}
+
+# Pure helper: human "N days" for an epoch (or a placeholder for "-"/unknown).
+_fc_days_ago() {
+  local t="$1" now="$2"
+  [[ "$t" =~ ^[0-9]+$ ]] || { printf 'an unknown time'; return; }
+  printf '%d days' "$(( (now - t) / 86400 ))"
+}
+
+# Pure helper (unit-tested): emit zero or more warning lines for stale updates.
+# Args: now_epoch days apt_enabled apt_ok_epoch apt_attempt_first_token claude_epoch
+# apt_ok_epoch / claude_epoch may be "-" (unknown); non-numeric is treated as "-".
+_fc_staleness_messages() {
+  local now="$1" days="$2" apt_enabled="$3" apt_ok="$4" apt_attempt="$5" claude_epoch="$6"
+  local max=$(( days * 86400 ))
+  [[ "$apt_ok" =~ ^[0-9]+$ ]] || apt_ok="-"
+  [[ "$claude_epoch" =~ ^[0-9]+$ ]] || claude_epoch="-"
+
+  if [[ "$apt_enabled" == "1" ]]; then
+    local stale=0
+    if [[ "$apt_ok" == "-" ]]; then stale=1
+    elif (( now - apt_ok > max )); then stale=1; fi
+    if (( stale )); then
+      local reason
+      case "$apt_attempt" in
+        error*)   reason="last attempt FAILED — check: journalctl -u fclaude-apt-upgrade" ;;
+        skipped*) reason="recent runs skipped — slow or offline network" ;;
+        ok*)      reason="" ;;
+        *)        reason="no successful upgrade recorded yet" ;;
+      esac
+      printf 'system packages not upgraded in %s%s; run: fclaude --update\n' \
+        "$(_fc_days_ago "$apt_ok" "$now")" "${reason:+ ($reason)}"
+    fi
+  fi
+
+  if [[ "$claude_epoch" != "-" ]] && (( now - claude_epoch > max )); then
+    printf 'Claude Code has not updated in %s — auto-updater may be stuck; run: fclaude --update\n' \
+      "$(_fc_days_ago "$claude_epoch" "$now")"
+  fi
+}
+
+# Session-start check: one best-effort ssh round-trip (purely local in the VM,
+# no network probe), then warn via the pure helper above. Never fails the caller.
+fclaude_staleness_warn() {
+  local days="${FCLAUDE_UPDATE_WARN_DAYS:-15}"
+  [[ "$days" =~ ^[0-9]+$ ]] && (( days > 0 )) || return 0
+  local apt_enabled="${FCLAUDE_UPDATE_APT:-1}"
+
+  local raw
+  # The apt-success stamp's CONTENT is the ISO timestamp of the last real upgrade
+  # (parse it, not the file mtime — a disk restore would reset mtime). The Claude
+  # versions dir has no such content, so its install time IS its mtime (date -r).
+  # shellcheck disable=SC2016  # intentional: the VM shell expands $s/$v/$HOME, not us
+  raw="$(ssh_vm '
+    s=$(date -d "$(cat /var/lib/fclaude/last-apt-success 2>/dev/null)" +%s 2>/dev/null || echo -);
+    a=$(head -1 /var/lib/fclaude/last-apt-upgrade 2>/dev/null || true);
+    v=$(ls -1dt "$HOME/.local/share/claude/versions/"*/ 2>/dev/null | head -1);
+    if [ -n "$v" ]; then m=$(date -r "$v" +%s 2>/dev/null || echo -); else m=-; fi;
+    printf "APT_OK=%s\nATTEMPT=%s\nCLAUDE=%s\n" "${s:--}" "${a:--}" "${m:--}"
+  ' 2>/dev/null || true)"
+  [[ -n "$raw" ]] || return 0
+
+  local apt_ok attempt claude_epoch
+  apt_ok="$(sed -n 's/^APT_OK=//p' <<<"$raw" | head -1)"
+  attempt="$(sed -n 's/^ATTEMPT=//p' <<<"$raw" | head -1)"
+  claude_epoch="$(sed -n 's/^CLAUDE=//p' <<<"$raw" | head -1)"
+
+  local now msg
+  now="$(date +%s)"
+  while IFS= read -r msg; do
+    [[ -n "$msg" ]] && warn "$msg"
+  done < <(_fc_staleness_messages "$now" "$days" "$apt_enabled" \
+             "${apt_ok:--}" "${attempt%% *}" "${claude_epoch:--}")
 }
 
 # ---------------------------------------------------------------------------

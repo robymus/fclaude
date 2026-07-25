@@ -1,0 +1,12 @@
+[Unit]
+Description=fclaude weekly apt/system-package upgrade (Docker/OS/Node; Claude self-updates separately)
+Documentation=https://github.com/robymus/fclaude
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/fclaude-update
+ExecStart=/usr/local/sbin/fclaude-apt-upgrade.sh
+Nice=10
+IOSchedulingClass=idle
