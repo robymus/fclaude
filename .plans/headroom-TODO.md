@@ -27,59 +27,59 @@ Each phase ends with a verification step.
 
 ## Phase 1 — Branch + `headroom wrap` / OAuth smoke test (GATE)
 
-- [ ] New feature branch off `main`.
-- [ ] In the VM (throwaway venv): `pip install headroom-ai` (base), run `headroom proxy --port 8787`.
-- [ ] **OAuth via wrap:** run `headroom wrap claude` in the VM and confirm a real session works
+- [x] New feature branch off `main`.
+- [x] In the VM (throwaway venv): `pip install headroom-ai` (base), run `headroom proxy --port 8787`.
+- [x] **OAuth via wrap:** run `headroom wrap claude` in the VM and confirm a real session works
       (Claude's OAuth carried, no 401).
-- [ ] **Shared-proxy attach:** with the `headroom proxy` service already running, confirm
+- [x] **Shared-proxy attach:** with the `headroom proxy` service already running, confirm
       `headroom wrap claude` **attaches** (single listener on `:8787` via `ss -ltnp`; no second proxy
       spawned; metrics reflect the wrapped traffic). Record the outcome.
-- [ ] Decide exec strategy: `headroom wrap claude` (preferred) — or, only if attach fails, the
+- [x] Decide exec strategy: `headroom wrap claude` (preferred) — or, only if attach fails, the
       explicit-`ANTHROPIC_BASE_URL` fallback. Note the choice in the plan.
-- [ ] Confirm the working `prometheus` agent flag (`--agent` vs `--enable-feature=agent`) for the
+- [x] Confirm the working `prometheus` agent flag (`--agent` vs `--enable-feature=agent`) for the
       version we'll pin.
-- [ ] **Verify:** a wrapped session completes a prompt end-to-end; decision recorded. **Gate the rest
+- [x] **Verify:** a wrapped session completes a prompt end-to-end; decision recorded. **Gate the rest
       on this.**
 
 ---
 
 ## Phase 2 — Remove llm.log (Part A)
 
-- [ ] Delete `host/systemd/fclaude-llmlog.{socket,service}`, `vm/ansible/llmlog.yml`,
+- [x] Delete `host/systemd/fclaude-llmlog.{socket,service}`, `vm/ansible/llmlog.yml`,
       `host/bin/fclaude-llmlog-setup`.
-- [ ] `lib/constants.sh`: drop `FCLAUDE_LLMLOG_*`.
-- [ ] `host/config.template`: drop the `LLMLOG_PROXY_PORT` block.
-- [ ] `lib/common.sh`: drop the llm.log comment block (keep `CLAUDE_LOGIN_ENV`).
-- [ ] `install.sh`: remove the llmlog socket render (step 10), the llmlog ansible (step 14),
+- [x] `lib/constants.sh`: drop `FCLAUDE_LLMLOG_*`.
+- [x] `host/config.template`: drop the `LLMLOG_PROXY_PORT` block.
+- [x] `lib/common.sh`: drop the llm.log comment block (keep `CLAUDE_LOGIN_ENV`).
+- [x] `install.sh`: remove the llmlog socket render (step 10), the llmlog ansible (step 14),
       `FCLAUDE_LLMLOG_PORT`/`FCLAUDE_SOCKET_PROXYD` from `RENDER_VARS`, the proxyd detection.
-- [ ] `uninstall.sh`: remove the llmlog unit disable/removal.
-- [ ] Grep the repo for `llmlog`/`llm.log`/`HTTPS_PROXY`/`LLMLOG` → zero references (except historical
+- [x] `uninstall.sh`: remove the llmlog unit disable/removal.
+- [x] Grep the repo for `llmlog`/`llm.log`/`HTTPS_PROXY`/`LLMLOG` → zero references (except historical
       plans).
-- [ ] **Verify:** `bash -n` + shellcheck clean on install/uninstall/common; `install.sh` RENDER path
+- [x] **Verify:** `bash -n` + shellcheck clean on install/uninstall/common; `install.sh` RENDER path
       still renders.
 
 ---
 
 ## Phase 3 — Config knobs
 
-- [ ] `lib/constants.sh`: `FCLAUDE_HEADROOM_ENABLE=1`, `FCLAUDE_HEADROOM_PORT=8787`,
+- [x] `lib/constants.sh`: `FCLAUDE_HEADROOM_ENABLE=1`, `FCLAUDE_HEADROOM_PORT=8787`,
       `FCLAUDE_METRICS_ENABLE=1`, `FCLAUDE_METRICS_HOST_LABEL=darkness`, `FCLAUDE_METRICS_VM_LABEL=fclaude`.
-- [ ] `host/config.template`: same keys (rendered placeholders) + doc comments.
-- [ ] `install.sh` `RENDER_VARS`: add the five vars.
-- [ ] **Verify:** render config.template → all placeholders resolve, sources cleanly under bash.
+- [x] `host/config.template`: same keys (rendered placeholders) + doc comments.
+- [x] `install.sh` `RENDER_VARS`: add the five vars.
+- [x] **Verify:** render config.template → all placeholders resolve, sources cleanly under bash.
 
 ---
 
 ## Phase 4 — Headroom proxy in the VM (Part B)
 
-- [ ] `vm/headroom/fclaude-headroom.service` (service runs `/opt/headroom/current/bin/headroom proxy
+- [x] `vm/headroom/fclaude-headroom.service` (service runs `/opt/headroom/current/bin/headroom proxy
       --port 8787`, `HEADROOM_UPDATE_CHECK=off`, `User=fclaude`, hardening).
-- [ ] `vm/ansible/site.yml`: install `python3-venv`/`pip`; create versioned venv + `current` symlink +
+- [x] `vm/ansible/site.yml`: install `python3-venv`/`pip`; create versioned venv + `current` symlink +
       `/usr/local/bin/headroom` symlink; drop-in the service; enable+start.
-- [ ] `lib/common.sh`: `HEADROOM_WRAP` (`'headroom wrap'` when `FCLAUDE_HEADROOM_ENABLE=1`, else empty).
-- [ ] `host/bin/fclaude`: both exec branches → `exec ${HEADROOM_WRAP} claude …`.
-- [ ] `host/bin/fclaude-vscode`: real-session + MCP-helper branches → `exec ${HEADROOM_WRAP} claude …`.
-- [ ] **Verify:** shellcheck clean; on the live VM a `fclaude`/`fclaude-vscode` session runs through
+- [x] `lib/common.sh`: `HEADROOM_WRAP` (`'headroom wrap'` when `FCLAUDE_HEADROOM_ENABLE=1`, else empty).
+- [x] `host/bin/fclaude`: both exec branches → `exec ${HEADROOM_WRAP} claude …`.
+- [x] `host/bin/fclaude-vscode`: real-session + MCP-helper branches → `exec ${HEADROOM_WRAP} claude …`.
+- [x] **Verify:** shellcheck clean; on the live VM a `fclaude`/`fclaude-vscode` session runs through
       the proxy (metrics counter increments).
 
 ---

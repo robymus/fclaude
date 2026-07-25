@@ -48,10 +48,12 @@ fc_is_mcp_helper() {
 
 if fc_is_mcp_helper "$@"; then
   # No mount, no workspace cd, nothing to release: exec straight through.
+  # Workspace-agnostic helpers (chrome-MCP singleton) are NOT routed through
+  # Headroom — they aren't coding sessions and shouldn't carry wrap's startup.
   exec ssh -T \
     -i "$SSH_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
     -o LogLevel=ERROR "${SSH_USER}@${VM_IP}" \
-    "${HEADROOM_VSCODE_ENV} ${CLAUDE_LOGIN_ENV} exec claude ${extra}"
+    "${CLAUDE_LOGIN_ENV} exec claude ${extra}"
 fi
 
 # The workspace must be under the shared root; otherwise we refuse to run (the
@@ -61,9 +63,8 @@ fi
 if abs="$(cd "$DIR" 2>/dev/null && pwd -P)" && (relpath_under_home "$abs") >/dev/null 2>&1; then
   mount_workspace "$abs"
   trap 'unmount_workspace "$abs"' EXIT
-  # VS Code sessions route through the in-VM Headroom proxy via ANTHROPIC_BASE_URL
-  # (HEADROOM_VSCODE_ENV) — NOT `headroom wrap`, whose stdout banner would corrupt
-  # the extension's stdio JSON protocol.
+  # Route through Headroom via `headroom-quiet wrap` (banner on stderr, so the
+  # extension's stdout JSON protocol stays clean).
   # cd into the SAME absolute path the host uses. In the VM /home/<hostuser> is a
   # bind mount of /home/fclaude, so the host cwd resolves to the mounted
   # workspace AND getcwd reports it under /home/<hostuser> (a symlink would be
@@ -71,7 +72,7 @@ if abs="$(cd "$DIR" 2>/dev/null && pwd -P)" && (relpath_under_home "$abs") >/dev
   ssh -T \
     -i "$SSH_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
     -o LogLevel=ERROR "${SSH_USER}@${VM_IP}" \
-    "${HEADROOM_VSCODE_ENV} ${CLAUDE_LOGIN_ENV} cd $(printf '%q' "$abs") && exec claude ${extra}"
+    "${CLAUDE_LOGIN_ENV} cd $(printf '%q' "$abs") && exec $(_headroom_launch) ${extra}"
 else
   die "workspace ${DIR} is not under ${SHARE_ROOT}; refusing to run (open a folder under your \$HOME)"
 fi
