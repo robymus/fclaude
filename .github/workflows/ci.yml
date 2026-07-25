@@ -16,6 +16,9 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y shellcheck
           python3 -m pip install --quiet ansible-core
+          # site.yml uses ansible.posix.mount (bind mount); syntax-check resolves
+          # module references, so the collection must be present.
+          ansible-galaxy collection install ansible.posix
 
       - name: Shellcheck (all shell scripts)
         run: |
