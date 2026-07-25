@@ -106,6 +106,9 @@ Re-apply the metrics secret/config to the running VM (or retrofit a pre-existing
 Knobs (in `~/.fclaude/config`): `FCLAUDE_HEADROOM_ENABLE`, `FCLAUDE_HEADROOM_MODEL`,
 `FCLAUDE_METRICS_ENABLE`, `FCLAUDE_METRICS_HOST_LABEL`, `FCLAUDE_METRICS_VM_LABEL`.
 
+The exported metric names are catalogued in
+[docs/HEADROOM-METRICS.md](docs/HEADROOM-METRICS.md).
+
 ## Grow the disk
 
 ```bash
