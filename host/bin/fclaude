@@ -109,6 +109,8 @@ ensure_vm_running
 
 # Warn (best-effort) if updates have silently stalled — never blocks the session.
 ( set +e; fclaude_staleness_warn ) || true
+# If a newer Headroom is staged and no session is running, activate it now.
+( set +e; headroom_activate_if_idle ) || true
 
 extra=""
 if ((${#CLAUDE_ARGS[@]})); then

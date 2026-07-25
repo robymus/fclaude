@@ -61,6 +61,8 @@ fi
 # release the mount afterwards. The relpath check runs in a subshell so its
 # die() can't abort this wrapper before we reach our own error message.
 if abs="$(cd "$DIR" 2>/dev/null && pwd -P)" && (relpath_under_home "$abs") >/dev/null 2>&1; then
+  # If a newer Headroom is staged and no session is running, activate it now.
+  ( set +e; headroom_activate_if_idle ) || true
   mount_workspace "$abs"
   trap 'unmount_workspace "$abs"' EXIT
   # Route through Headroom via `headroom-quiet wrap` (banner on stderr, so the

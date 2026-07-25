@@ -117,6 +117,21 @@ _headroom_launch() {
   fi
 }
 
+# Activate a newer STAGED Headroom version, but only when this is the "first
+# instance" (no Claude running in the VM) so a proxy restart never disrupts a live
+# session. Best-effort and cheap; safe to call on every session start. Guarded by a
+# host-side flock so two concurrent first-starts don't both restart.
+headroom_activate_if_idle() {
+  [[ "${FCLAUDE_HEADROOM_ENABLE:-1}" == "1" ]] || return 0
+  with_lock "headroom-activate" _headroom_activate_if_idle
+}
+_headroom_activate_if_idle() {
+  # `pgrep -x claude` in the VM: if none, we're the first instance → safe to swap.
+  if ! ssh_vm 'pgrep -x claude >/dev/null 2>&1'; then
+    ssh_vm 'sudo /usr/local/sbin/fclaude-headroom-activate >/dev/null 2>&1' || true
+  fi
+}
+
 # Run a command in the VM with a PTY (for interactive claude / shells).
 ssh_vm_tty() {
   local -a opts=()
