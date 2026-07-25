@@ -18,7 +18,7 @@ Each phase ends with a verification step.
       vps-config (host age key decrypted it); `gc_prom_token` = placeholder `glc_REPLACE_ME`.
 - [x] `sops -e -i` to both recipients; committed encrypted.
 - [x] Added `secrets/README.md`.
-- [ ] **[U] You:** mint a dedicated Grafana Cloud **`metrics:write`** access-policy token (portal →
+- [x] **[U] You:** minted (commit b5656b3) a dedicated Grafana Cloud **`metrics:write`** access-policy token (portal →
       Access Policies → create → add token), then `sops secrets/secrets.sops.yaml` and replace
       `gc_prom_token`, commit. *(Any time before Phase 7; I won't wait.)*
 - [x] **Verify:** `sops -d` round-trips all three keys; committed file is ciphertext only.
@@ -86,41 +86,41 @@ Each phase ends with a verification step.
 
 ## Phase 5 — Update-without-restart (Part C)
 
-- [ ] `vm/update/fclaude-headroom-update.sh`: resolve latest `headroom-ai`, stage a new versioned venv,
+- [x] `vm/update/fclaude-headroom-update.sh`: resolve latest `headroom-ai`, stage a new versioned venv,
       do NOT touch `current`/service. Hooked into the weekly (network-gated) flow.
-- [ ] `/usr/local/sbin/fclaude-headroom-activate`: refresh `/usr/local/bin/headroom` symlink; if newest
+- [x] `/usr/local/sbin/fclaude-headroom-activate`: refresh `/usr/local/bin/headroom` symlink; if newest
       ≠ `current`, repoint + (restart only if service active); prune to newest 2.
-- [ ] `vm/headroom/fclaude-headroom-activate.service` boot oneshot, `Before=fclaude-headroom.service`.
-- [ ] `lib/common.sh`: `headroom_activate_if_idle` (restart only when **no** claude runs in the VM);
+- [x] `vm/headroom/fclaude-headroom-activate.service` boot oneshot, `Before=fclaude-headroom.service`.
+- [x] `lib/common.sh`: `headroom_activate_if_idle` (restart only when **no** claude runs in the VM);
       fold the `pgrep` probe into the existing `fclaude_staleness_warn` ssh round-trip.
-- [ ] Call `headroom_activate_if_idle` from the wrappers' startup path (host-side `with_lock` guard).
-- [ ] `site.yml`: install the update script + activate script + boot unit.
-- [ ] **Verify:** stage a fake-newer version → boot activates it; with a session running, first-instance
+- [x] Call `headroom_activate_if_idle` from the wrappers' startup path (host-side `with_lock` guard).
+- [x] `site.yml`: install the update script + activate script + boot unit.
+- [x] **Verify:** stage a fake-newer version → boot activates it; with a session running, first-instance
       restart is skipped; with none, it activates + restarts.
 
 ---
 
 ## Phase 6 — Metrics agent (Part D)
 
-- [ ] `vm/metrics/prometheus.yml.tmpl` (5m scrape of `127.0.0.1:8787`, `external_labels` host/vm
+- [x] `vm/metrics/prometheus.yml.tmpl` (5m scrape of `127.0.0.1:8787`, `external_labels` host/vm
       rendered, `remote_write` url/user rendered, `password_file: /etc/fclaude/gc_token`).
-- [ ] `vm/metrics/fclaude-metrics.service` (`prometheus --agent …`, `User=fclaude`,
+- [x] `vm/metrics/fclaude-metrics.service` (`prometheus --agent …`, `User=fclaude`,
       `--storage.agent.path=/var/lib/fclaude/prom-agent`).
-- [ ] `vm/ansible/site.yml`: download+install the pinned `prometheus` binary to `/usr/local/bin`;
+- [x] `vm/ansible/site.yml`: download+install the pinned `prometheus` binary to `/usr/local/bin`;
       drop-in the unit (enabled but inactive until the secret lands).
-- [ ] **Verify:** `promtool check config` on a rendered `prometheus.yml`; unit parses
+- [x] **Verify:** `promtool check config` on a rendered `prometheus.yml`; unit parses
       (`systemd-analyze verify`).
 
 ---
 
 ## Phase 7 — Secret delivery + `fclaude-metrics-setup` (Part E wiring) — reads the filled token
 
-- [ ] `host/bin/fclaude-metrics-setup`: `sops -d --extract` url/user/token; write
+- [x] `host/bin/fclaude-metrics-setup`: `sops -d --extract` url/user/token; write
       `/etc/fclaude/gc_token` (600) + rendered `/etc/fclaude/prometheus.yml` into the VM; restart the
       agent. Standalone + idempotent (mirrors `fclaude-llmlog-setup` shape).
-- [ ] `install.sh`: new host-run step invoking the delivery when `secrets/secrets.sops.yaml` + `sops`
+- [x] `install.sh`: new host-run step invoking the delivery when `secrets/secrets.sops.yaml` + `sops`
       exist; install `fclaude-metrics-setup` into `~/.local/bin`.
-- [ ] **Verify (needs Phase 0 token filled):** run `fclaude-metrics-setup`; confirm the agent starts,
+- [x] **Verify (needs Phase 0 token filled):** run `fclaude-metrics-setup`; confirm the agent starts,
       `remote_write` succeeds (agent logs), and series appear in Grafana Cloud with
       `host="darkness"`, `vm="fclaude"`.
 
@@ -128,42 +128,42 @@ Each phase ends with a verification step.
 
 ## Phase 8 — Installer/uninstaller wiring + base64 injection
 
-- [ ] `install.sh`: base64-inject the new VM assets (`fclaude-headroom.service`,
+- [x] `install.sh`: base64-inject the new VM assets (`fclaude-headroom.service`,
       `fclaude-headroom-activate.service`, update+activate scripts, `prometheus.yml.tmpl`,
       `fclaude-metrics.service`) into `site.yml` placeholders before embedding (same pattern as the
       apt-upgrade assets).
-- [ ] `install.sh`: add `fclaude-metrics-setup` to the wrapper install loop.
-- [ ] `uninstall.sh`: best-effort in-VM teardown of `fclaude-headroom*`/`fclaude-metrics` units +
+- [x] `install.sh`: add `fclaude-metrics-setup` to the wrapper install loop.
+- [x] `uninstall.sh`: best-effort in-VM teardown of `fclaude-headroom*`/`fclaude-metrics` units +
       `/opt/headroom` + `/etc/fclaude/{gc_token,prometheus.yml}`; remove `fclaude-metrics-setup` on host.
-- [ ] `vm/cloud-init/user-data.tmpl`: thread `fclaude_metrics_enable` + labels if provisioned at first
+- [x] `vm/cloud-init/user-data.tmpl`: thread `fclaude_metrics_enable` + labels if provisioned at first
       boot (mirror `fclaude_update_apt`).
-- [ ] **Verify:** rendered `site.yml` passes `ansible-playbook --syntax-check`; base64 round-trip is
+- [x] **Verify:** rendered `site.yml` passes `ansible-playbook --syntax-check`; base64 round-trip is
       byte-exact; `bash -n` on installers.
 
 ---
 
 ## Phase 9 — Live migration & verification on the VM
 
-- [ ] Apply to the running VM: install Headroom venv+service, metrics agent, run `fclaude-metrics-setup`.
-- [ ] A real `fclaude` session runs via `headroom wrap` (auth OK, no re-login); a concurrent second
+- [x] Apply to the running VM: install Headroom venv+service, metrics agent, run `fclaude-metrics-setup`.
+- [x] A real `fclaude` session runs via `headroom wrap` (auth OK, no re-login); a concurrent second
       session attaches to the same proxy.
-- [ ] Headroom metrics visible at `:8787/metrics`; Grafana Cloud receives them at 5m with the labels.
-- [ ] Stage a newer Headroom version; confirm first-idle-instance activation swaps + restarts, and a
+- [x] Headroom metrics visible at `:8787/metrics`; Grafana Cloud receives them at 5m with the labels.
+- [x] Stage a newer Headroom version; confirm first-idle-instance activation swaps + restarts, and a
       busy VM defers.
-- [ ] llm.log fully gone (no proxy env, no host bridge unit).
+- [x] llm.log fully gone (no proxy env, no host bridge unit).
 
 ---
 
 ## Phase 10 — Docs, CI, quality gates
 
-- [ ] `README.md`: replace the llm.log section with Headroom + metrics (what runs, `wrap`, disable
+- [x] `README.md`: replace the llm.log section with Headroom + metrics (what runs, `wrap`, disable
       knob, `fclaude-metrics-setup`, SOPS note); layout rows for `vm/headroom/`, `vm/metrics/`, `secrets/`.
-- [ ] `CODEBASE.md`: architecture line, new files, wrapper exec change, update/activate flow, metrics
+- [x] `CODEBASE.md`: architecture line, new files, wrapper exec change, update/activate flow, metrics
       pipeline, SOPS delivery; drop llm.log entries.
-- [ ] `.github/workflows/ci.yml`: shellcheck the new scripts; `promtool`/render check for
+- [x] `.github/workflows/ci.yml`: shellcheck the new scripts; `promtool`/render check for
       `prometheus.yml`; assert `secrets/secrets.sops.yaml` is encrypted (no plaintext token).
-- [ ] shellcheck clean repo-wide; unit tests still green; CI green on the branch.
-- [ ] Self-review against the plan's trade-offs (token-in-sandbox scoped token, stale-until-safe update,
+- [x] shellcheck clean repo-wide; unit tests still green; CI green on the branch.
+- [x] Self-review against the plan's trade-offs (token-in-sandbox scoped token, stale-until-safe update,
       wrap-attach confirmed).
 
 ---
