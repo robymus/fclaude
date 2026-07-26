@@ -65,16 +65,23 @@ if abs="$(cd "$DIR" 2>/dev/null && pwd -P)" && (relpath_under_home "$abs") >/dev
   ( set +e; headroom_activate_if_idle ) || true
   mount_workspace "$abs"
   trap 'unmount_workspace "$abs"' EXIT
-  # Route through Headroom via `headroom-quiet wrap` (banner on stderr, so the
-  # extension's stdout JSON protocol stays clean).
+  # Route through Headroom by pointing claude at the shared in-VM proxy. NOT via
+  # `headroom wrap`: it writes ANTHROPIC_BASE_URL into the workspace's
+  # .claude/settings.local.json, and since the workspace is an NFS share of the
+  # host repo, that lands in the real checkout — where a claude running outside
+  # the VM then dials a proxy that does not exist there. Opening a folder in VS
+  # Code runs this wrapper even when you never start a Claude session, so that
+  # write happened whether or not you engaged Claude. See _headroom_launch.
+  #
   # cd into the SAME absolute path the host uses. In the VM /home/<hostuser> is a
   # bind mount of /home/fclaude, so the host cwd resolves to the mounted
   # workspace AND getcwd reports it under /home/<hostuser> (a symlink would be
   # canonicalized back to /home/fclaude) — claude returns host-matching paths.
+  # `cd … || exit 1;` — see the note in host/bin/fclaude.
   ssh -T \
     -i "$SSH_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
     -o LogLevel=ERROR "${SSH_USER}@${VM_IP}" \
-    "${CLAUDE_LOGIN_ENV} cd $(printf '%q' "$abs") && exec $(_headroom_launch) ${extra}"
+    "${CLAUDE_LOGIN_ENV} cd $(printf '%q' "$abs") || exit 1; $(_tokensave_prepare_cmd) exec $(_headroom_launch "$abs") ${extra}"
 else
   die "workspace ${DIR} is not under ${SHARE_ROOT}; refusing to run (open a folder under your \$HOME)"
 fi

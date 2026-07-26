@@ -8,7 +8,7 @@ Wants=network-online.target
 Type=simple
 User=fclaude
 Environment=HEADROOM_UPDATE_CHECK=off
-# Claude Code already defers its own tool schemas (`headroom wrap` sets
+# Claude Code already defers its own tool schemas (the fclaude wrappers set
 # ENABLE_TOOL_SEARCH=true) and resolves them CLIENT-side via its own ToolSearch
 # tool. Headroom's proxy-side deferral stacks a SECOND, server-side
 # `tool_search_tool_regex` on top: it re-defers the ~15 tools Claude Code still

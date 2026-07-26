@@ -4,6 +4,8 @@
 # Creates the sandbox VM and wires up the host: packages, disk, cloud-init seed,
 # libvirt domain + NAT reservation, NFS sharing, firewall, sudoers, and the
 # wrapper scripts. Safe to re-run (idempotent where practical).
+#
+# `--wrappers-only` reinstalls just the host-side scripts — see usage() below.
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -18,6 +20,33 @@ step() { printf '\n\033[1;32m==>\033[0m %s\n' "$*"; }
 
 VIRSH() { sudo virsh "$@"; }   # use system libvirt during install
 
+# --- usage / options --------------------------------------------------------
+usage() {
+  cat <<'EOF'
+Usage: install.sh [--wrappers-only]
+
+  (no options)     Full install: host packages, VM disk, cloud-init seed, libvirt
+                   domain, NFS/firewall/sudoers, host scripts, VM provisioning.
+
+  --wrappers-only  Reinstall ONLY the host-side scripts (the ~/.local/bin
+                   wrappers + ~/.local/lib/fclaude library). Touches no VM, no
+                   packages, no system config, and needs no sudo or network.
+                   Use after editing a wrapper or pulling a change that only
+                   touches host/ or lib/ — a full re-run would redo minutes of
+                   provisioning to copy a handful of files.
+EOF
+}
+
+WRAPPERS_ONLY=0
+while (($#)); do
+  case "$1" in
+    --wrappers-only) WRAPPERS_ONLY=1 ;;
+    -h | --help)     usage; exit 0 ;;
+    *)               usage >&2; die "unknown option: $1" ;;
+  esac
+  shift
+done
+
 # --- template rendering -----------------------------------------------------
 # render <template-file> <output-file> : replace every __VAR__ with $VAR.
 # Extra dynamic vars (pubkeys, base64 playbook, bridge, HOME) are exported below.
@@ -29,6 +58,50 @@ render() {
   done
   printf '%s\n' "$content" >"$out"
 }
+
+# --- host scripts -----------------------------------------------------------
+# Step 11 of a full install, and the whole of --wrappers-only. These are plain
+# copies — nothing here is templated or VM-dependent — which is exactly why they
+# can be reinstalled on their own.
+install_host_scripts() {
+  install -m 644 "${REPO_DIR}/lib/common.sh"    "${FCLAUDE_LIB_DIR}/common.sh"
+  install -m 644 "${REPO_DIR}/lib/constants.sh" "${FCLAUDE_LIB_DIR}/constants.sh"
+  local w
+  for w in fclaude fclaude-vscode fclaude-grow-disk fclaude-update-setup fclaude-metrics-setup; do
+    install -m 755 "${REPO_DIR}/host/bin/${w}" "${FCLAUDE_BIN_DIR}/${w}"
+  done
+  info "wrappers installed to $FCLAUDE_BIN_DIR"
+}
+
+# Report knobs the config template defines that an existing ~/.fclaude/config
+# predates. Not an error: every knob is read as `${VAR:-<default>}`, so a stale
+# config just means the new ones are not tunable from the file yet. A full
+# install never rewrites an existing config either (it drops a .new alongside),
+# so this drift is expected and worth naming rather than silently ignoring.
+config_knob_drift() {
+  if [[ ! -r "$FCLAUDE_CONFIG" ]]; then
+    warn "no config at $FCLAUDE_CONFIG — run a full install before using fclaude"
+    return 0
+  fi
+  local key missing=()
+  while read -r key; do
+    grep -qE "^[[:space:]]*${key}=" "$FCLAUDE_CONFIG" || missing+=("$key")
+  done < <(sed -n 's/^\([A-Z_][A-Z_0-9]*\)=.*/\1/p' "${REPO_DIR}/host/config.template")
+  ((${#missing[@]})) || return 0
+  warn "$FCLAUDE_CONFIG predates these knobs; their defaults apply until you add them:"
+  for key in "${missing[@]}"; do
+    printf '      %s="%s"\n' "$key" "${!key-}" >&2
+  done
+}
+
+if ((WRAPPERS_ONLY)); then
+  step "Install host scripts only (no VM, no system config)"
+  mkdir -p "$FCLAUDE_BIN_DIR" "$FCLAUDE_LIB_DIR"
+  install_host_scripts
+  config_knob_drift
+  printf '\n\033[1;32mfclaude host scripts updated.\033[0m\n'
+  exit 0
+fi
 
 # ===========================================================================
 step "1/14Pre-flight checks"
@@ -108,7 +181,6 @@ _apt_sh_b64="$(base64 -w0 "${REPO_DIR}/vm/update/fclaude-apt-upgrade.sh")"
 _apt_svc_b64="$(base64 -w0 "${REPO_DIR}/vm/update/fclaude-apt-upgrade.service")"
 _apt_tmr_b64="$(base64 -w0 "${REPO_DIR}/vm/update/fclaude-apt-upgrade.timer")"
 _hr_svc_b64="$(base64 -w0 "${REPO_DIR}/vm/headroom/fclaude-headroom.service")"
-_hr_quiet_b64="$(base64 -w0 "${REPO_DIR}/vm/headroom/headroom-quiet")"
 _hr_act_sh_b64="$(base64 -w0 "${REPO_DIR}/vm/headroom/fclaude-headroom-activate.sh")"
 _hr_act_svc_b64="$(base64 -w0 "${REPO_DIR}/vm/headroom/fclaude-headroom-activate.service")"
 _hr_upd_b64="$(base64 -w0 "${REPO_DIR}/vm/update/fclaude-headroom-update.sh")"
@@ -118,7 +190,6 @@ sed -e "s|__APT_UPGRADE_SH_B64__|${_apt_sh_b64}|g" \
     -e "s|__APT_UPGRADE_SERVICE_B64__|${_apt_svc_b64}|g" \
     -e "s|__APT_UPGRADE_TIMER_B64__|${_apt_tmr_b64}|g" \
     -e "s|__HEADROOM_SERVICE_B64__|${_hr_svc_b64}|g" \
-    -e "s|__HEADROOM_QUIET_B64__|${_hr_quiet_b64}|g" \
     -e "s|__HEADROOM_ACTIVATE_SH_B64__|${_hr_act_sh_b64}|g" \
     -e "s|__HEADROOM_ACTIVATE_SERVICE_B64__|${_hr_act_svc_b64}|g" \
     -e "s|__HEADROOM_UPDATE_SH_B64__|${_hr_upd_b64}|g" \
@@ -138,6 +209,7 @@ RENDER_VARS=(
   FCLAUDE_UPDATE_APT FCLAUDE_UPDATE_MIN_MBIT FCLAUDE_UPDATE_PROBE_URL
   FCLAUDE_UPDATE_PROBE_MAXTIME FCLAUDE_UPDATE_WARN_DAYS
   FCLAUDE_HEADROOM_ENABLE FCLAUDE_HEADROOM_PORT FCLAUDE_HEADROOM_MODEL
+  FCLAUDE_TOKENSAVE_SYNC FCLAUDE_TOKENSAVE_TIMEOUT
   FCLAUDE_METRICS_ENABLE FCLAUDE_METRICS_HOST_LABEL FCLAUDE_METRICS_VM_LABEL
 )
 
@@ -282,12 +354,7 @@ info "boot-persistence units enabled."
 
 # ===========================================================================
 step "11/14Install wrappers + library"
-install -m 644 "${REPO_DIR}/lib/common.sh"    "${FCLAUDE_LIB_DIR}/common.sh"
-install -m 644 "${REPO_DIR}/lib/constants.sh" "${FCLAUDE_LIB_DIR}/constants.sh"
-for w in fclaude fclaude-vscode fclaude-grow-disk fclaude-update-setup fclaude-metrics-setup; do
-  install -m 755 "${REPO_DIR}/host/bin/${w}" "${FCLAUDE_BIN_DIR}/${w}"
-done
-info "wrappers installed to $FCLAUDE_BIN_DIR"
+install_host_scripts
 
 # ===========================================================================
 step "12/14Write config + VM info"

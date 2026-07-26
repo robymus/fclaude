@@ -25,6 +25,13 @@ This creates a 32 GiB VM disk at `~/.fclaude/fclaude-disk`, boots an Ubuntu 24.0
 with Ansible (Node + Claude Code + Docker), configures host NFS sharing and firewall rules, and
 installs the wrapper scripts into `~/.local/bin`.
 
+To redeploy **only** the host-side scripts after editing a wrapper or pulling a change under
+`host/` or `lib/` — no VM, no packages, no system config, no sudo:
+
+```bash
+./install.sh --wrappers-only
+```
+
 Claude Code is installed with its **native installer** (a self-contained binary under the VM
 account's `~/.local`, on the `latest` channel) so it can update itself in the background even
 while sessions are running. Node stays for your own project work, not for Claude.
@@ -84,21 +91,44 @@ wrapper handles VM startup, mounting, and cleanup automatically.
 ## Headroom proxy + Grafana Cloud metrics
 
 Claude in the VM runs through **[Headroom](https://github.com/headroomlabs-ai/headroom)**, a
-context-compression proxy, launched via `headroom-quiet wrap claude` (a shim that keeps its banner off
-stdout so the VS Code stdio protocol stays intact). One shared proxy service serves every session, and
-its Prometheus metrics are shipped to **Grafana Cloud**.
+context-compression proxy. One shared proxy service serves every session, and its Prometheus metrics
+are shipped to **Grafana Cloud**.
 
-- **Proxy:** a persistent `fclaude-headroom.service` in the VM (loopback `:8787`). The wrappers set
-  `ANTHROPIC_MODEL=<FCLAUDE_HEADROOM_MODEL>[1m]` + `--1m` so the **1M context window** stays active on
-  your chosen model (default `claude-opus-5`). `FCLAUDE_HEADROOM_ENABLE=0` bypasses Headroom entirely.
-- **Tool search:** `wrap` sets `ENABLE_TOOL_SEARCH=true` so Claude Code keeps deferring its tool
+- **Proxy:** a persistent `fclaude-headroom.service` in the VM (loopback `:8787`). The wrappers point
+  Claude at it with `ANTHROPIC_BASE_URL` and set `ANTHROPIC_MODEL=<FCLAUDE_HEADROOM_MODEL>[1m]` so the
+  **1M context window** stays active on your chosen model (default `claude-opus-5`) — the `[1m]`
+  suffix is what makes Claude Code send the `context-1m` beta header.
+  `FCLAUDE_HEADROOM_ENABLE=0` bypasses Headroom entirely.
+- **Not `headroom wrap`:** wrap writes `env.ANTHROPIC_BASE_URL` (plus a `SessionStart` hook and a
+  marker file) into the workspace's `.claude/settings.local.json` — which, over the NFS mount, *is
+  your host repo*. A `claude` run outside the VM in that checkout then dials a proxy that only exists
+  inside the VM and fails with ConnectionRefused; merely opening the folder in VS Code was enough to
+  trigger it, since the extension runs the wrapper for every claude process. Headroom offers no flag
+  to disable that write, so the wrappers set the same environment themselves and never call `wrap`.
+- **Tool search:** the wrappers set `ENABLE_TOOL_SEARCH=true` so Claude Code keeps deferring its tool
   schemas (11 tools / 40 KB per request instead of 147 / 170 KB) and loads them on demand through its
   own client-side `ToolSearch`. The proxy's *own* server-side deferral is pinned **off**
   (`HEADROOM_TOOL_SEARCH=off`): stacking the two made the model answer searches with `server_tool_use`
   blocks the VS Code extension can't render (`Unsupported content type: server_tool_use`) and made
   every deferred tool report "no tools match". See [CODEBASE.md](CODEBASE.md) for the full trace.
+- **Code graph:** before each session the wrappers refresh the tokensave index for the workspace
+  (`tokensave init` the first time, `sync` after — the store is per-project, in `<repo>/.tokensave/`).
+  The index is a 200 MB-class binary and tokensave stopped ignoring itself after 7.0.x, so it must be
+  kept out of git. The VM globally ignores it (`~/.config/git/ignore`, provisioned by `site.yml`);
+  if nothing ignores it the wrappers append a one-line `.gitignore` entry to the repo as a fallback.
+  `git check-ignore` is what decides, so a global ignore makes that fallback stand down and the repo
+  stays untouched. **On the host**, add it yourself — one line, no `git config` needed, since git
+  reads this path by default:
+
+  ```bash
+  echo '.tokensave/' >> ~/.config/git/ignore
+  ```
+
+  `FCLAUDE_TOKENSAVE_SYNC=0` turns the whole step off.
 - **Updates:** a newer Headroom is *staged* weekly (alongside the apt run) into a versioned venv and
   only activated at boot or when no session is running — the live proxy is never restarted under load.
+  The same weekly run upgrades the tokensave binary (which otherwise never self-updates), skipping
+  while a session is live and refreshing its agent integration after a version bump.
 - **Metrics:** an in-VM `prometheus --agent` scrapes `:8787/metrics` every 5 min and `remote_write`s to
   Grafana Cloud, labelled `host=<FCLAUDE_METRICS_HOST_LABEL>` / `vm=<FCLAUDE_METRICS_VM_LABEL>`.
   Credentials live in a **SOPS**-encrypted secret (`secrets/secrets.sops.yaml`, age recipients in

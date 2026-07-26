@@ -237,8 +237,9 @@
       when: (fclaude_update_apt | default('1')) | string == '1'
 
     # --- Headroom context-compression proxy (in-VM) ---
-    # The fclaude wrappers launch Claude via `headroom-quiet wrap claude` against
-    # this shared proxy. Versioned venv + `current` symlink → hot-update-safe
+    # The fclaude wrappers point Claude at this shared proxy with
+    # ANTHROPIC_BASE_URL (not `headroom wrap` — see lib/common.sh
+    # _headroom_launch). Versioned venv + `current` symlink → hot-update-safe
     # (see fclaude-headroom-activate). base64 assets injected by install.sh.
     - name: Install python venv tooling for Headroom
       ansible.builtin.apt:
@@ -264,12 +265,6 @@
       args:
         executable: /bin/bash
         creates: /opt/headroom/current
-
-    - name: Install headroom-quiet shim (Click banner -> stderr, for stdio safety)
-      ansible.builtin.copy:
-        dest: /usr/local/bin/headroom-quiet
-        content: "{{ '__HEADROOM_QUIET_B64__' | b64decode }}"
-        mode: '0755'
 
     - name: Install Headroom activate + update scripts
       ansible.builtin.copy:
@@ -298,6 +293,71 @@
       loop:
         - fclaude-headroom-activate.service
         - fclaude-headroom.service
+      when: (fclaude_headroom_enable | default('1')) | string == '1'
+
+    # Local (stdio) MCP servers Claude Code needs to act on what the proxy does:
+    # `headroom` answers the `[Retrieve more: hash=…]` markers compression leaves
+    # behind, `tokensave` is the code-graph compressor. `headroom wrap` used to
+    # register both on every session start; the wrappers no longer call wrap (it
+    # wrote settings into the mounted host repo — see lib/common.sh
+    # _headroom_launch), so provisioning owns this now. Registration is durable
+    # USER-scope state, so once is enough. `claude mcp get` is the idempotency
+    # check: it is authoritative regardless of where the CLI persists the entry.
+    - name: Register the Headroom retrieve MCP server (user scope)
+      become: true
+      become_user: "{{ fclaude_user }}"
+      ansible.builtin.shell: |
+        set -uo pipefail
+        export PATH="$HOME/.local/bin:$PATH"
+        if claude mcp get headroom >/dev/null 2>&1; then exit 0; fi
+        headroom mcp install --agent claude
+      args:
+        executable: /bin/bash
+      changed_when: false
+      when: (fclaude_headroom_enable | default('1')) | string == '1'
+
+    # Git ignores ~/.config/git/ignore by DEFAULT (the XDG path), with no
+    # core.excludesFile needed. Ignoring the code-graph store globally keeps a
+    # 200 MB-class binary index out of `git status` in every repo, without a
+    # per-repo .gitignore diff — and it makes the wrappers' own .gitignore step
+    # stand down, since `git check-ignore` (its test) honours this file.
+    # lineinfile, not copy: never clobber ignores the user added themselves.
+    - name: Globally git-ignore the tokensave code-graph store
+      become: true
+      become_user: "{{ fclaude_user }}"
+      ansible.builtin.lineinfile:
+        path: "/home/{{ fclaude_user }}/.config/git/ignore"
+        line: "{{ item }}"
+        create: true
+        mode: '0644'
+      loop:
+        - "# tokensave code-graph index (local, binary; created by fclaude sessions)"
+        - ".tokensave/"
+
+    # ensure_tokensave() fetches the release binary for this platform into
+    # ~/.local/bin (a no-op once present) and returns its path, or nothing when
+    # no asset exists / the download fails. tokensave is an optimization, so an
+    # empty result is logged and skipped rather than failing the provision.
+    - name: Install the tokensave code-graph binary and register its MCP server
+      become: true
+      become_user: "{{ fclaude_user }}"
+      ansible.builtin.shell: |
+        set -uo pipefail
+        export PATH="$HOME/.local/bin:$PATH"
+        if claude mcp get tokensave >/dev/null 2>&1; then exit 0; fi
+        bin="$(/opt/headroom/current/bin/python - <<'PY'
+        from headroom.graph.tokensave_installer import ensure_tokensave
+        print(ensure_tokensave() or "")
+        PY
+        )"
+        if [ -z "$bin" ]; then
+          echo "tokensave unavailable for this platform — skipping registration"
+          exit 0
+        fi
+        claude mcp add tokensave -s user -- "$bin" serve
+      args:
+        executable: /bin/bash
+      changed_when: false
       when: (fclaude_headroom_enable | default('1')) | string == '1'
 
     # --- Metrics agent (prometheus --agent) — config + token delivered host-side ---

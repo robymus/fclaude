@@ -10,7 +10,7 @@ design rationale and [README.md](README.md) for usage.
 host wrapper (~/.local/bin/fclaude)
   → ensure_vm_running (virsh, system libvirt via 'libvirt' group)
   → mount_workspace   (bind-mount $HOME/<rel> into ~/.fclaude/exports, exportfs, NFSv4 mount in VM)
-  → ssh fclaude@192.168.122.10 "cd /home/fclaude/<rel> && exec headroom-quiet wrap claude --1m --no-proxy -- --dangerously-skip-permissions"
+  → ssh fclaude@192.168.122.10 "cd /home/fclaude/<rel> || exit 1; <tokensave sync>; exec env ANTHROPIC_BASE_URL=… ANTHROPIC_MODEL=<model>[1m] … claude --settings '{…}' --dangerously-skip-permissions"
   → unmount_workspace on EXIT (reference counted)
 
 VM "fclaude" (Ubuntu 24.04, KVM): uid-1000 fclaude user, sudo NOPASSWD, docker, node, a self-updating
@@ -24,7 +24,7 @@ Host firewall (nftables table 'fclaude') blocks VM→host privileged ports (<102
 ### Top level
 | File | Role |
 |---|---|
-| `install.sh` | Host installer. 13 ordered steps: preflight → apt → dirs → disk (guarded) → ssh keys → cloud-init seed → libvirt net+DHCP → define/start VM → NFS+firewall+sudoers → systemd units → wrappers → config/vm-info → wait-for-provision. Idempotent where practical. Uses `sudo virsh` during install; renders templates via the `render()` helper. |
+| `install.sh` | Host installer. 13 ordered steps: preflight → apt → dirs → disk (guarded) → ssh keys → cloud-init seed → libvirt net+DHCP → define/start VM → NFS+firewall+sudoers → systemd units → wrappers → config/vm-info → wait-for-provision. Idempotent where practical. Uses `sudo virsh` during install; renders templates via the `render()` helper. **`--wrappers-only`** runs `install_host_scripts()` (step 11) and nothing else — the host scripts are plain, untemplated copies, so editing a wrapper does not need minutes of VM provisioning to deploy; no sudo, no network, no VM. It also reports config knobs the existing `~/.fclaude/config` predates (a full install never rewrites an existing config either — it drops a `.new` beside it). |
 | `uninstall.sh` | Reverses install. Heavy confirmation (typed phrase). **Never deletes the disk silently** — separate `DELETE DISK` opt-in prompt at the very end. |
 | `README.md` | User-facing quick start. |
 | `REQUIREMENTS.md` | Original requirements (source of truth for intent). |
@@ -91,7 +91,7 @@ only after that address exists.
 | `cloud-init/user-data.tmpl` | First boot: create `fclaude` (uid 1000, sudo NOPASSWD) + `maint` users, inject pubkeys, growpart/resize, install `ansible`+`git`, drop the playbook via `write_files` (base64), run it locally (`-e host_user=<USER> -e fclaude_update_apt=<0\|1>`). |
 | `cloud-init/network-config.tmpl` | NoCloud netplan v2 (rendered into 50-cloud-init.yaml at first boot via `cloud-localds -N`): DHCP on the pinned NIC **plus a conservative `mtu` (`FCLAUDE_VM_MTU`, default 1400)** so the VM tolerates host-side tunnels (e.g. WireGuard ~1420) without black-holing large TLS responses. Baked into the primary file — **never** a second netplan drop-in (a second file re-declaring the interface conflicts with `match`/`set-name`), and **never** applied live with `netplan apply` over ssh (that disrupts the running NIC and needs a reboot to recover). |
 | `ansible/site.yml` | In-VM provisioning (runs IN the VM, `-c local`): base tools, **Docker** (get.docker.com, fclaude in docker group), **Node 22 (for user projects, not Claude)**, **native Claude Code** (`claude.ai/install.sh \| bash`, run as fclaude) + `autoUpdatesChannel: latest` merged into `settings.json`, headless-chrome runtime libs (no browser), `/home/fclaude` ownership, host-home bind mount, and the **weekly apt-upgrade** assets (script + service + timer, enabled when `fclaude_update_apt=1`) + seeded `last-apt-success`. Shipped base64-embedded in the seed; the `vm/update/*` assets are injected into `__*_B64__` placeholders by install.sh before embedding. |
-| `headroom/` | Headroom proxy assets embedded into `site.yml` by install.sh: `fclaude-headroom.service` (persistent proxy on loopback `:8787`, `--no-http2`), `headroom-quiet` (Click-banner→stderr shim), `fclaude-headroom-activate.{sh,service}` (repoint `current` + restart at boot / when idle). |
+| `headroom/` | Headroom proxy assets embedded into `site.yml` by install.sh: `fclaude-headroom.service` (persistent proxy on loopback `:8787`, `--no-http2`), `fclaude-headroom-activate.{sh,service}` (repoint `current` + restart at boot / when idle). |
 | `metrics/` | `prometheus.yml.tmpl` (5m scrape of `:8787`, remote_write, `password_file`) + `fclaude-metrics.service` (`prometheus --agent`, gated on the delivered secret). |
 | `libvirt/domain.xml.tmpl` | KVM domain: 8 GiB / 6 vCPU, q35, **named CPU model `FCLAUDE_VM_CPU_MODEL` (EPYC-Milan) — NOT host-passthrough** (raw Zen4 passthrough corrupts guest memory; see below), raw vda (cache=none, discard=unmap), seed cdrom, virtio NIC with fixed MAC, guest agent, virtio-rng. |
 
@@ -133,17 +133,67 @@ only after that address exists.
   multi-process SIGSEGV (incl. PID 1), VM dying every few minutes. Traced to an AVX-512/Zen4 path
   miscomputing under KVM; a KVM-validated model without AVX-512 (`EPYC-Milan`) ran 80+ min clean.
   (`FCLAUDE_VM_CPU_MODEL`, `vm/libvirt/domain.xml.tmpl`)
-- **Headroom compression proxy (in-VM) + `headroom-quiet wrap`** — Claude's API traffic runs through
-  a shared in-VM Headroom proxy (`fclaude-headroom.service`, loopback `:8787`). The wrappers launch it
-  via **`headroom-quiet wrap claude`**, NOT a hand-set `ANTHROPIC_BASE_URL`, so headroom's own
-  workarounds apply automatically (incl. `--1m` for the 1M window and tool-search #746). `wrap` prints
-  a startup banner to **stdout**, which corrupted the VS Code stdio JSON protocol — `headroom-quiet` is
-  a shim that monkeypatches `click.echo/secho` to stderr, keeping stdout clean, which is what lets BOTH
-  the interactive and VS Code wrappers use `wrap`. `--1m` sets `ANTHROPIC_MODEL=<model>[1m]` (env
-  overrides settings.json), so the model to run is a config knob (`FCLAUDE_HEADROOM_MODEL`, default
-  `claude-opus-5`) — verified opus-5 via the session transcript. Replaces the old llm.log proxy
-  entirely (no `HTTPS_PROXY`, no host bridge); removal strips any stale llm.log block from the VM's
-  `/etc/environment`. (`vm/headroom/`, `lib/common.sh` `_headroom_launch`)
+- **Headroom compression proxy (in-VM), driven by env — NEVER `headroom wrap`** — Claude's API traffic
+  runs through a shared in-VM Headroom proxy (`fclaude-headroom.service`, loopback `:8787`). The
+  wrappers point Claude at it themselves and **must not** call `headroom wrap claude`: wrap
+  unconditionally writes `env.ANTHROPIC_BASE_URL` into `<cwd>/.claude/settings.local.json`, plus a
+  `SessionStart` self-heal hook and a `.headroom_wrap_marker.json` sidecar (headroom 0.32.1
+  `wrap.py:4630`/`:4646`, their #951/#2221), and offers **no flag or env var to turn it off**. Our cwd
+  is an NFS share of a **host** directory, so those writes land in the user's real repo — where a
+  `claude` running *outside* the VM reads `ANTHROPIC_BASE_URL=127.0.0.1:8787` and dies with
+  ConnectionRefused. It fired even when Claude was never engaged: the VS Code extension runs
+  `fclaude-vscode` for *every* claude process, so just opening the folder poisoned the repo. On clean
+  exit wrap restores the env key but **leaves the hook**; only `headroom unwrap` removes it.
+  What the launch line reproduces instead (all verified against wrap.py and on the wire in
+  `~/.headroom/logs/proxy.log`): `ANTHROPIC_BASE_URL`; `ANTHROPIC_MODEL=<model>[1m]`, which is the
+  *entirety* of `--1m` (`wrap.py:4676`→`:229`) — Claude Code converts the `[1m]` suffix into the
+  `context-1m-2025-08-07` beta header, and the env overrides settings.json, so the model is a config
+  knob (`FCLAUDE_HEADROOM_MODEL`, default `claude-opus-5`); `ENABLE_TOOL_SEARCH=true` (#746, below);
+  and `ANTHROPIC_CUSTOM_HEADERS: X-Headroom-Project` for per-project savings attribution
+  (percent-encoded exactly like headroom's `quote(name, safe="-_.() ")`). The base URL is *also*
+  passed as inline `--settings` JSON — the one job the settings file did, since cc-daemon spawns
+  conversation workers that re-read settings rather than inherit the environment (#951); `--settings`
+  takes a JSON **string**, so no file is written anywhere. MCP registration (headroom retrieve +
+  tokensave) is durable user-scope state in the VM's `~/.claude.json` that wrap only re-asserted —
+  `site.yml` provisions it once. The one genuinely per-session job wrap did, the tokensave code-graph
+  refresh (`wrap.py:1542`), is now `_tokensave_prepare_cmd`. Replaces the old llm.log proxy entirely (no
+  `HTTPS_PROXY`, no host bridge); removal strips any stale llm.log block from the VM's
+  `/etc/environment`. (`vm/headroom/`, `lib/common.sh` `_headroom_launch`, `test/test-headroom-launch.sh`)
+- **tokensave is per-project, and must be `init`ed there** — the code-graph store is
+  `<workspace>/.tokensave/` (`tokensave.db` + `config.json` + `branch-meta.json`); the VM home's
+  `~/.tokensave/` is a *different* thing, the global store (config, the savings ledger `global.db`,
+  mmaps). `tokensave sync` refuses to run on an uninitialized project, and with no local store
+  tokensave resolves **upward to a parent project** — so a stray index at `/home/fclaude` (one was
+  created by a 7.0.2-era sync that walked all of `$HOME`, 204 MB) can silently capture every repo
+  mounted beneath it. `_tokensave_prepare_cmd` is immune by construction: `init` when `.tokensave/` is
+  absent, `sync` when present, so each workspace is self-contained. Cost is a one-time full index on
+  the first launch in a repo (capped by `FCLAUDE_TOKENSAVE_TIMEOUT`, silent, non-fatal — tokensave
+  finishes lazily on demand). Measured on 7.7.0: `sync` of an unchanged project is ~12 ms.
+- **Keeping the code-graph store out of git — global ignore first, repo `.gitignore` as fallback** —
+  7.0.x appended a `.gitignore` entry for its own store, 7.7.0 does not, so a 200 MB+ binary index
+  otherwise sits untracked in a fresh repo, one `git add -A` from being committed. Preferred fix is a
+  **global** ignore: git reads `$XDG_CONFIG_HOME/git/ignore` (→ `~/.config/git/ignore`) **by default**,
+  with no `core.excludesFile` needed. `site.yml` provisions it in the VM (`lineinfile`, so a user's own
+  entries are never clobbered); the host side is the user's own one-liner (see README) — install.sh
+  deliberately does NOT edit a personal git config. When neither covers it, `_tokensave_prepare_cmd`
+  appends the entry to the repo. `git check-ignore` is the test rather than a grep for the literal, so
+  a global ignore, `.git/info/exclude`, a parent `.gitignore` or any other pattern form all count as
+  already-handled — which is what makes the fallback **stand down** the moment a global ignore exists,
+  leaving the repo completely untouched. Outside a git repo, or before a store exists, it writes
+  nothing. Appends only to the `.gitignore` of the directory holding the store, and never joins its
+  entry onto an unterminated last line. Note for anyone extending `test-headroom-launch.sh`: those
+  cases run git under `HOME`/`XDG_CONFIG_HOME`/`GIT_CONFIG_*` overrides, because a developer machine
+  that globally ignores `.tokensave/` would otherwise make every "not ignored yet" case test the
+  opposite of what it claims.
+- **tokensave never self-updates** — headroom's `ensure_tokensave()` returns early whenever the binary
+  exists, so it installs ONCE and then stays pinned forever; ours sat at 7.0.2 while 7.7.0 shipped.
+  The weekly `fclaude-headroom-update.sh` now runs `tokensave upgrade`, guarded by the same
+  `pgrep -x claude` idle rule as `fclaude-headroom-activate` (the upgrade replaces a binary a live
+  `tokensave serve` is executing). A version bump is followed by `tokensave reinstall`, because a
+  release that adds MCP tools leaves them unpermitted until the agent integration is refreshed
+  (7.0.2 → 7.7.0 added 81, and Claude Code warns on every call until then). `reinstall` is run from
+  `$HOME` and without `--local`, so it only ever touches the VM's USER-scope config — never a mounted
+  repo. (`vm/update/fclaude-headroom-update.sh`)
 - **`HEADROOM_TOOL_SEARCH=off` — the two tool-deferral layers must not stack** — Claude Code already
   defers its own tool schemas and resolves them **client-side** through its own `ToolSearch` tool;
   `headroom wrap` keeps that on by setting `ENABLE_TOOL_SEARCH=true` (needed because Claude Code
