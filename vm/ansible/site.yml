@@ -360,6 +360,30 @@
       changed_when: false
       when: (fclaude_headroom_enable | default('1')) | string == '1'
 
+    # tokensave ships with `upload_enabled = true` — it reports token-savings
+    # counts to a worldwide counter. Off here: fclaude sessions run on whatever
+    # the user is working on, which includes private infrastructure repos, and
+    # that is not a default worth inheriting silently. Without this a VM rebuild
+    # would quietly opt back in, since the setting is VM-local state.
+    #
+    # Driven through the CLI rather than by writing ~/.tokensave/config.toml
+    # directly, so tokensave owns the file's shape and its other defaults
+    # (watcher_debounce, extraction_timeout_secs, …) are never half-written.
+    # Idempotent: the command just sets the flag. Re-enable per VM with
+    # `tokensave enable-upload-counter`.
+    - name: Disable the tokensave worldwide-counter upload (telemetry)
+      become: true
+      become_user: "{{ fclaude_user }}"
+      ansible.builtin.shell: |
+        set -uo pipefail
+        export PATH="$HOME/.local/bin:$PATH"
+        command -v tokensave >/dev/null 2>&1 || exit 0
+        cd "$HOME" && tokensave disable-upload-counter
+      args:
+        executable: /bin/bash
+      changed_when: false
+      when: (fclaude_headroom_enable | default('1')) | string == '1'
+
     # --- Metrics agent (prometheus --agent) — config + token delivered host-side ---
     # by fclaude-metrics-setup (install.sh step 14). The unit is gated on those
     # files existing, so it stays inactive until the secret lands.

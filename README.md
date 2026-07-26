@@ -124,7 +124,8 @@ are shipped to **Grafana Cloud**.
   echo '.tokensave/' >> ~/.config/git/ignore
   ```
 
-  `FCLAUDE_TOKENSAVE_SYNC=0` turns the whole step off.
+  `FCLAUDE_TOKENSAVE_SYNC=0` turns the whole step off. tokensave's worldwide-counter upload is
+  disabled at provisioning (`tokensave enable-upload-counter` re-enables it per VM).
 - **Updates:** a newer Headroom is *staged* weekly (alongside the apt run) into a versioned venv and
   only activated at boot or when no session is running — the live proxy is never restarted under load.
   The same weekly run upgrades the tokensave binary (which otherwise never self-updates), skipping
