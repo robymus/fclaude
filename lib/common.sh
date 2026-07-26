@@ -172,21 +172,46 @@ _headroom_launch() {
   printf ' claude --settings %q' "{\"env\":{\"ANTHROPIC_BASE_URL\":\"${proxy}\"}}"
 }
 
-# Remote-shell snippet that refreshes the tokensave code graph for the workspace
-# we are about to launch in. `headroom wrap` ran this on every start
-# (wrap.py:1542) and it is the ONLY per-session work we give up by not calling
-# wrap, so we do it ourselves. Emits a `;`-terminated snippet to run AFTER the
-# cd into the workspace (relies on cwd, like tokensave itself).
+# Remote-shell snippet that prepares the tokensave code graph for the workspace
+# we are about to launch in. Emits a `;`-terminated snippet to run AFTER the cd
+# into the workspace — both steps are cwd-relative, like tokensave itself.
+#
+# 1. Refresh the graph. `headroom wrap` did this on every start (wrap.py:1542)
+#    and it is the ONLY per-session work we give up by not calling wrap. The
+#    store is per-project (`<workspace>/.tokensave/`), `sync` refuses to run on
+#    an uninitialized project, and with no local store tokensave resolves UPWARD
+#    to a parent project — so init-when-absent is what keeps each workspace
+#    bound to its own index instead of some ancestor's.
+#
+# 2. Make the store git-ignore itself. tokensave 7.0.x appended the entry; 7.7.0
+#    does not, so an unignored 200 MB+ binary index now shows up as untracked in
+#    a fresh repo, one `git add -A` away from being committed. A one-line
+#    .gitignore diff is the cheaper of the two. `git check-ignore` is the test
+#    rather than grepping for a literal: it honours the global ignore file,
+#    .git/info/exclude and any pattern form, so we never add a duplicate. Only
+#    ever appends to the .gitignore of the directory the store lives in.
 #
 # Silent and non-fatal by construction: any stray stdout would corrupt the VS
 # Code stdio JSON protocol, and tokensave re-checks staleness on demand anyway,
 # so a failure here costs nothing. Emits nothing at all when disabled.
-_tokensave_sync_cmd() {
+_tokensave_prepare_cmd() {
   [[ "${FCLAUDE_TOKENSAVE_SYNC:-1}" == "1" ]] || return 0
-  local t="${FCLAUDE_TOKENSAVE_TIMEOUT:-60}"
-  printf 'if command -v tokensave >/dev/null 2>&1; then '
-  printf 'if [ -d .tokensave ]; then timeout %s tokensave sync; ' "$t"
-  printf 'else timeout %s tokensave init; fi >/dev/null 2>&1 || true; fi;' "$t"
+  # Quoted heredoc: every $ and \ below belongs to the REMOTE shell, not to us.
+  # __T__ is the only thing we substitute. $() strips the trailing newline, so
+  # the snippet ends exactly at `fi` and the `;` lets `exec …` follow it.
+  local snippet
+  snippet="$(cat <<'REMOTE'
+if command -v tokensave >/dev/null 2>&1; then
+  if [ -d .tokensave ]; then timeout __T__ tokensave sync; else timeout __T__ tokensave init; fi >/dev/null 2>&1 || true
+fi
+if [ -d .tokensave ] && git rev-parse --is-inside-work-tree >/dev/null 2>&1 && ! git check-ignore -q .tokensave 2>/dev/null; then
+  { [ -s .gitignore ] && [ -n "$(tail -c1 .gitignore)" ] && printf '\n'
+    printf '# tokensave code-graph index (local, binary)\n.tokensave/\n'
+  } >>.gitignore 2>/dev/null || true
+fi
+REMOTE
+  )"
+  printf '%s;' "${snippet//__T__/${FCLAUDE_TOKENSAVE_TIMEOUT:-60}}"
 }
 
 # Activate a newer STAGED Headroom version, but only when this is the "first

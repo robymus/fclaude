@@ -111,8 +111,15 @@ are shipped to **Grafana Cloud**.
   (`HEADROOM_TOOL_SEARCH=off`): stacking the two made the model answer searches with `server_tool_use`
   blocks the VS Code extension can't render (`Unsupported content type: server_tool_use`) and made
   every deferred tool report "no tools match". See [CODEBASE.md](CODEBASE.md) for the full trace.
+- **Code graph:** before each session the wrappers refresh the tokensave index for the workspace
+  (`tokensave init` the first time, `sync` after — the store is per-project, in `<repo>/.tokensave/`).
+  They also add a one-line `.gitignore` entry for it if nothing ignores it yet: the index is a
+  200 MB-class binary, and tokensave stopped ignoring itself after 7.0.x. `FCLAUDE_TOKENSAVE_SYNC=0`
+  turns the whole step off.
 - **Updates:** a newer Headroom is *staged* weekly (alongside the apt run) into a versioned venv and
   only activated at boot or when no session is running — the live proxy is never restarted under load.
+  The same weekly run upgrades the tokensave binary (which otherwise never self-updates), skipping
+  while a session is live and refreshing its agent integration after a version bump.
 - **Metrics:** an in-VM `prometheus --agent` scrapes `:8787/metrics` every 5 min and `remote_write`s to
   Grafana Cloud, labelled `host=<FCLAUDE_METRICS_HOST_LABEL>` / `vm=<FCLAUDE_METRICS_VM_LABEL>`.
   Credentials live in a **SOPS**-encrypted secret (`secrets/secrets.sops.yaml`, age recipients in

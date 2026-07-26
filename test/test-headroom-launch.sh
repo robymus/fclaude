@@ -35,6 +35,14 @@ hasnt() {
   fi
 }
 
+# ok <description> <"yes"|"no">
+ok() {
+  local desc="$1" cond="$2"
+  if [[ "$cond" == "yes" ]]; then pass=$((pass + 1)); else
+    fail=$((fail + 1)); printf 'FAIL: %s\n' "$desc"
+  fi
+}
+
 # eq <description> <expected> <actual>
 eq() {
   local desc="$1" want="$2" got="$3"
@@ -99,8 +107,8 @@ FCLAUDE_HEADROOM_ENABLE=0
 eq "disabled headroom launches plain claude" "claude" "$(_headroom_launch /tmp/x)"
 FCLAUDE_HEADROOM_ENABLE=1
 
-# --- _tokensave_sync_cmd --------------------------------------------------
-sync_out="$(_tokensave_sync_cmd)"
+# --- _tokensave_prepare_cmd -----------------------------------------------
+sync_out="$(_tokensave_prepare_cmd)"
 has "sync incrementally updates an existing graph" "tokensave sync" "$sync_out"
 has "sync initializes a repo with no graph yet"    "tokensave init" "$sync_out"
 has "sync is skipped when tokensave is absent"     "command -v tokensave" "$sync_out"
@@ -112,9 +120,69 @@ if bash -n <<<"$sync_out true"; then pass=$((pass + 1)); else
   fail=$((fail + 1)); printf 'FAIL: tokensave snippet is not valid shell: %s\n' "$sync_out"
 fi
 
+# --- the .gitignore step, executed for real -------------------------------
+# tokensave is not on this host, so the indexing half no-ops and the gitignore
+# half — guarded only by `[ -d .tokensave ]` — runs. That is the whole point of
+# not nesting it inside the `command -v tokensave` check: it is exercisable, and
+# it stays correct even when the binary is missing but a store already exists.
+#
+# run_prepare <dir> : run the emitted snippet in <dir>, exactly as the VM would.
+run_prepare() { ( cd "$1" && eval "$sync_out true" ); }
+
+tsdir="$(mktemp -d)"
+trap 'rm -rf "$tsdir"' EXIT
+
+# A git repo whose store is not ignored yet: the entry is added and git agrees.
+repo="${tsdir}/plain"; mkdir -p "$repo/.tokensave"
+git -C "$repo" init -q
+run_prepare "$repo"
+ok "adds the ignore entry to a repo that lacks it" \
+  "$([[ -f "$repo/.gitignore" ]] && echo yes || echo no)"
+ok "git actually ignores the store afterwards" \
+  "$(git -C "$repo" check-ignore -q .tokensave && echo yes || echo no)"
+has "entry names the directory" ".tokensave/" "$(cat "$repo/.gitignore")"
+has "entry explains itself" "tokensave code-graph index" "$(cat "$repo/.gitignore")"
+
+# Idempotent: a second launch must not append a duplicate.
+run_prepare "$repo"
+eq "does not duplicate the entry on the next launch" "1" \
+  "$(grep -c '^\.tokensave/$' "$repo/.gitignore")"
+
+# An existing .gitignore with NO trailing newline must not have its last line
+# joined to ours — the classic append bug.
+nonl="${tsdir}/nonl"; mkdir -p "$nonl/.tokensave"
+git -C "$nonl" init -q
+printf 'build' >"$nonl/.gitignore"          # deliberately unterminated
+run_prepare "$nonl"
+eq "preserves an unterminated last line" "build" "$(head -1 "$nonl/.gitignore")"
+ok "still ignores the store" \
+  "$(git -C "$nonl" check-ignore -q .tokensave && echo yes || echo no)"
+
+# Already ignored by a DIFFERENT pattern form (or via .git/info/exclude, global
+# ignore, a parent .gitignore…): check-ignore is the authority, so we add nothing.
+already="${tsdir}/already"; mkdir -p "$already/.tokensave"
+git -C "$already" init -q
+printf '.token*\n' >"$already/.gitignore"
+run_prepare "$already"
+eq "adds nothing when another pattern already covers it" ".token*" \
+  "$(cat "$already/.gitignore")"
+
+# Not a git repo: nothing to ignore, so no stray .gitignore appears.
+nogit="${tsdir}/nogit"; mkdir -p "$nogit/.tokensave"
+run_prepare "$nogit"
+ok "creates no .gitignore outside a git repo" \
+  "$([[ ! -e "$nogit/.gitignore" ]] && echo yes || echo no)"
+
+# No store yet (tokensave absent, so nothing was indexed): touch nothing.
+nostore="${tsdir}/nostore"; mkdir -p "$nostore"
+git -C "$nostore" init -q
+run_prepare "$nostore"
+ok "creates no .gitignore when there is no store" \
+  "$([[ ! -e "$nostore/.gitignore" ]] && echo yes || echo no)"
+
 # Last knob in the file, so it is not restored afterwards.
 export FCLAUDE_TOKENSAVE_SYNC=0
-eq "sync emits nothing when disabled" "" "$(_tokensave_sync_cmd)"
+eq "sync emits nothing when disabled" "" "$(_tokensave_prepare_cmd)"
 
 # --- summary --------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

@@ -186,7 +186,7 @@ if [[ "$DO_MOUNT" == 1 ]]; then
   abs="$(cd "$DIR" && pwd -P)"
   mount_workspace "$abs"
   trap 'unmount_workspace "$abs"' EXIT
-  ssh_vm_tty "${CLAUDE_LOGIN_ENV} cd ${VM_MOUNT_BASE%/}/${rel} || exit 1; $(_tokensave_sync_cmd) exec $(_headroom_launch "$abs") --dangerously-skip-permissions ${extra}"
+  ssh_vm_tty "${CLAUDE_LOGIN_ENV} cd ${VM_MOUNT_BASE%/}/${rel} || exit 1; $(_tokensave_prepare_cmd) exec $(_headroom_launch "$abs") --dangerously-skip-permissions ${extra}"
 else
   # No workspace mounted: nothing to index, so no tokensave sync.
   ssh_vm_tty "${CLAUDE_LOGIN_ENV} cd ${VM_MOUNT_BASE} || exit 1; exec $(_headroom_launch "$VM_MOUNT_BASE") --dangerously-skip-permissions ${extra}"

@@ -156,7 +156,7 @@ only after that address exists.
   takes a JSON **string**, so no file is written anywhere. MCP registration (headroom retrieve +
   tokensave) is durable user-scope state in the VM's `~/.claude.json` that wrap only re-asserted —
   `site.yml` provisions it once. The one genuinely per-session job wrap did, the tokensave code-graph
-  refresh (`wrap.py:1542`), is now `_tokensave_sync_cmd`. Replaces the old llm.log proxy entirely (no
+  refresh (`wrap.py:1542`), is now `_tokensave_prepare_cmd`. Replaces the old llm.log proxy entirely (no
   `HTTPS_PROXY`, no host bridge); removal strips any stale llm.log block from the VM's
   `/etc/environment`. (`vm/headroom/`, `lib/common.sh` `_headroom_launch`, `test/test-headroom-launch.sh`)
 - **tokensave is per-project, and must be `init`ed there** — the code-graph store is
@@ -165,10 +165,17 @@ only after that address exists.
   mmaps). `tokensave sync` refuses to run on an uninitialized project, and with no local store
   tokensave resolves **upward to a parent project** — so a stray index at `/home/fclaude` (one was
   created by a 7.0.2-era sync that walked all of `$HOME`, 204 MB) can silently capture every repo
-  mounted beneath it. `_tokensave_sync_cmd` is immune by construction: `init` when `.tokensave/` is
+  mounted beneath it. `_tokensave_prepare_cmd` is immune by construction: `init` when `.tokensave/` is
   absent, `sync` when present, so each workspace is self-contained. Cost is a one-time full index on
   the first launch in a repo (capped by `FCLAUDE_TOKENSAVE_TIMEOUT`, silent, non-fatal — tokensave
-  finishes lazily on demand). Measured on 7.7.0: `sync` of an unchanged project is ~12 ms.
+  finishes lazily on demand). Measured on 7.7.0: `sync` of an unchanged project is ~12 ms. The same
+  step **git-ignores the store**: 7.0.x appended the entry itself, 7.7.0 does not, so a 200 MB+ binary
+  index sits untracked in a fresh repo, one `git add -A` from being committed — a one-line `.gitignore`
+  diff is the cheaper trade. `git check-ignore` decides (not a grep for the literal), so a global
+  ignore file, `.git/info/exclude`, a parent `.gitignore` or any other pattern form all count as
+  already-handled and nothing is appended; outside a git repo, or before a store exists, it writes
+  nothing at all. Appends only to the `.gitignore` of the directory holding the store, and never joins
+  its entry onto an unterminated last line.
 - **tokensave never self-updates** — headroom's `ensure_tokensave()` returns early whenever the binary
   exists, so it installs ONCE and then stays pinned forever; ours sat at 7.0.2 while 7.7.0 shipped.
   The weekly `fclaude-headroom-update.sh` now runs `tokensave upgrade`, guarded by the same
