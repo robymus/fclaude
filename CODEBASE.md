@@ -159,6 +159,25 @@ only after that address exists.
   refresh (`wrap.py:1542`), is now `_tokensave_sync_cmd`. Replaces the old llm.log proxy entirely (no
   `HTTPS_PROXY`, no host bridge); removal strips any stale llm.log block from the VM's
   `/etc/environment`. (`vm/headroom/`, `lib/common.sh` `_headroom_launch`, `test/test-headroom-launch.sh`)
+- **tokensave is per-project, and must be `init`ed there** — the code-graph store is
+  `<workspace>/.tokensave/` (`tokensave.db` + `config.json` + `branch-meta.json`); the VM home's
+  `~/.tokensave/` is a *different* thing, the global store (config, the savings ledger `global.db`,
+  mmaps). `tokensave sync` refuses to run on an uninitialized project, and with no local store
+  tokensave resolves **upward to a parent project** — so a stray index at `/home/fclaude` (one was
+  created by a 7.0.2-era sync that walked all of `$HOME`, 204 MB) can silently capture every repo
+  mounted beneath it. `_tokensave_sync_cmd` is immune by construction: `init` when `.tokensave/` is
+  absent, `sync` when present, so each workspace is self-contained. Cost is a one-time full index on
+  the first launch in a repo (capped by `FCLAUDE_TOKENSAVE_TIMEOUT`, silent, non-fatal — tokensave
+  finishes lazily on demand). Measured on 7.7.0: `sync` of an unchanged project is ~12 ms.
+- **tokensave never self-updates** — headroom's `ensure_tokensave()` returns early whenever the binary
+  exists, so it installs ONCE and then stays pinned forever; ours sat at 7.0.2 while 7.7.0 shipped.
+  The weekly `fclaude-headroom-update.sh` now runs `tokensave upgrade`, guarded by the same
+  `pgrep -x claude` idle rule as `fclaude-headroom-activate` (the upgrade replaces a binary a live
+  `tokensave serve` is executing). A version bump is followed by `tokensave reinstall`, because a
+  release that adds MCP tools leaves them unpermitted until the agent integration is refreshed
+  (7.0.2 → 7.7.0 added 81, and Claude Code warns on every call until then). `reinstall` is run from
+  `$HOME` and without `--local`, so it only ever touches the VM's USER-scope config — never a mounted
+  repo. (`vm/update/fclaude-headroom-update.sh`)
 - **`HEADROOM_TOOL_SEARCH=off` — the two tool-deferral layers must not stack** — Claude Code already
   defers its own tool schemas and resolves them **client-side** through its own `ToolSearch` tool;
   `headroom wrap` keeps that on by setting `ENABLE_TOOL_SEARCH=true` (needed because Claude Code
