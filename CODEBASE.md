@@ -185,6 +185,11 @@ only after that address exists.
   cases run git under `HOME`/`XDG_CONFIG_HOME`/`GIT_CONFIG_*` overrides, because a developer machine
   that globally ignores `.tokensave/` would otherwise make every "not ignored yet" case test the
   opposite of what it claims.
+- **tokensave telemetry is off** — it ships with `upload_enabled = true`, reporting token-savings
+  counts to a worldwide counter. `site.yml` disables it via `tokensave disable-upload-counter` (the
+  CLI, not a hand-written `~/.tokensave/config.toml`, so tokensave keeps ownership of that file's
+  other defaults). This is VM-local state, so provisioning has to own it or a rebuild silently opts
+  back in. Re-enable per VM with `tokensave enable-upload-counter`.
 - **tokensave never self-updates** — headroom's `ensure_tokensave()` returns early whenever the binary
   exists, so it installs ONCE and then stays pinned forever; ours sat at 7.0.2 while 7.7.0 shipped.
   The weekly `fclaude-headroom-update.sh` now runs `tokensave upgrade`, guarded by the same
