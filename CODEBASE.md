@@ -143,6 +143,23 @@ only after that address exists.
   `claude-opus-5`) — verified opus-5 via the session transcript. Replaces the old llm.log proxy
   entirely (no `HTTPS_PROXY`, no host bridge); removal strips any stale llm.log block from the VM's
   `/etc/environment`. (`vm/headroom/`, `lib/common.sh` `_headroom_launch`)
+- **`HEADROOM_TOOL_SEARCH=off` — the two tool-deferral layers must not stack** — Claude Code already
+  defers its own tool schemas and resolves them **client-side** through its own `ToolSearch` tool;
+  `headroom wrap` keeps that on by setting `ENABLE_TOOL_SEARCH=true` (needed because Claude Code
+  disables deferral whenever `ANTHROPIC_BASE_URL` is custom — headroom #746). Measured on the wire:
+  deferral on = 11 tools / 40 KB of schema per request, off = 147 tools / 170 KB. The proxy has a
+  *second*, server-side layer that marks tools `defer_loading` and injects an Anthropic
+  `tool_search_tool_regex`; it fired on every request (`transforms=… router:tool_search_deferral:15tools`
+  in `~/.headroom/logs/proxy.log`) even though its source calls it opt-in. Stacked on top of Claude
+  Code's own deferral it breaks tool loading two ways: the model's searches come back as
+  `server_tool_use` / `tool_search_tool_result` blocks, which the **VS Code extension's webview cannot
+  render** (`Unsupported content type: server_tool_use` — the string lives in the extension bundle, not
+  in `claude`, which is why the CLI path survives; cf. claude-code#64158); and the injected regex only
+  indexes the ~15 tools present in the request, while every real deferred tool (MCP servers, WebSearch,
+  …) lives in Claude Code's client-side registry — so every lookup answers "no tools match". Headroom's
+  keep-resident allowlist is lowercase opencode names (`bash`, `read`, `edit`), so no Claude Code tool
+  ever matches it and even `ToolSearch` itself gets deferred. Pinned off explicitly in the unit rather
+  than trusting the documented opt-in default. (`vm/headroom/fclaude-headroom.service`)
 - **Headroom updates never restart a live proxy** — `fclaude-headroom-update.sh` (weekly, piggybacks
   the network-gated apt run) STAGES the latest `headroom-ai[proxy]` into a new versioned venv without
   touching the running proxy; `fclaude-headroom-activate` repoints `/opt/headroom/current` + restarts

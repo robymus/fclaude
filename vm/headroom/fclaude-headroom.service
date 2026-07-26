@@ -8,6 +8,18 @@ Wants=network-online.target
 Type=simple
 User=fclaude
 Environment=HEADROOM_UPDATE_CHECK=off
+# Claude Code already defers its own tool schemas (`headroom wrap` sets
+# ENABLE_TOOL_SEARCH=true) and resolves them CLIENT-side via its own ToolSearch
+# tool. Headroom's proxy-side deferral stacks a SECOND, server-side
+# `tool_search_tool_regex` on top: it re-defers the ~15 tools Claude Code still
+# sends (its core-tool allowlist is lowercase opencode names, so no Claude Code
+# tool ever matches) and the model then answers searches with `server_tool_use` /
+# `tool_search_tool_result` blocks. The VS Code extension's webview cannot render
+# those ("Unsupported content type: server_tool_use") and the server-side regex
+# only indexes the handful of tools in the request, so every deferred MCP/system
+# tool comes back "no tools match". Turn the proxy-side layer off; the client-side
+# deferral keeps the token saving.
+Environment=HEADROOM_TOOL_SEARCH=off
 # Loopback-only; --no-http2 avoids shared-connection TLS corruption
 # (SSLV3_ALERT_BAD_RECORD_MAC) when many concurrent streams are cancelled —
 # relevant with several concurrent Claude sessions.
