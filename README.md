@@ -113,9 +113,18 @@ are shipped to **Grafana Cloud**.
   every deferred tool report "no tools match". See [CODEBASE.md](CODEBASE.md) for the full trace.
 - **Code graph:** before each session the wrappers refresh the tokensave index for the workspace
   (`tokensave init` the first time, `sync` after — the store is per-project, in `<repo>/.tokensave/`).
-  They also add a one-line `.gitignore` entry for it if nothing ignores it yet: the index is a
-  200 MB-class binary, and tokensave stopped ignoring itself after 7.0.x. `FCLAUDE_TOKENSAVE_SYNC=0`
-  turns the whole step off.
+  The index is a 200 MB-class binary and tokensave stopped ignoring itself after 7.0.x, so it must be
+  kept out of git. The VM globally ignores it (`~/.config/git/ignore`, provisioned by `site.yml`);
+  if nothing ignores it the wrappers append a one-line `.gitignore` entry to the repo as a fallback.
+  `git check-ignore` is what decides, so a global ignore makes that fallback stand down and the repo
+  stays untouched. **On the host**, add it yourself — one line, no `git config` needed, since git
+  reads this path by default:
+
+  ```bash
+  echo '.tokensave/' >> ~/.config/git/ignore
+  ```
+
+  `FCLAUDE_TOKENSAVE_SYNC=0` turns the whole step off.
 - **Updates:** a newer Headroom is *staged* weekly (alongside the apt run) into a versioned venv and
   only activated at boot or when no session is running — the live proxy is never restarted under load.
   The same weekly run upgrades the tokensave binary (which otherwise never self-updates), skipping

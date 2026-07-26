@@ -316,6 +316,24 @@
       changed_when: false
       when: (fclaude_headroom_enable | default('1')) | string == '1'
 
+    # Git ignores ~/.config/git/ignore by DEFAULT (the XDG path), with no
+    # core.excludesFile needed. Ignoring the code-graph store globally keeps a
+    # 200 MB-class binary index out of `git status` in every repo, without a
+    # per-repo .gitignore diff — and it makes the wrappers' own .gitignore step
+    # stand down, since `git check-ignore` (its test) honours this file.
+    # lineinfile, not copy: never clobber ignores the user added themselves.
+    - name: Globally git-ignore the tokensave code-graph store
+      become: true
+      become_user: "{{ fclaude_user }}"
+      ansible.builtin.lineinfile:
+        path: "/home/{{ fclaude_user }}/.config/git/ignore"
+        line: "{{ item }}"
+        create: true
+        mode: '0644'
+      loop:
+        - "# tokensave code-graph index (local, binary; created by fclaude sessions)"
+        - ".tokensave/"
+
     # ensure_tokensave() fetches the release binary for this platform into
     # ~/.local/bin (a no-op once present) and returns its path, or nothing when
     # no asset exists / the download fails. tokensave is an optimization, so an

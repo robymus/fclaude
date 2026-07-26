@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Unit tests for the pure Headroom launch helpers in lib/common.sh
-# (_headroom_launch / _headroom_project_label / _tokensave_sync_cmd).
+# (_headroom_launch / _headroom_project_label / _tokensave_prepare_cmd).
 # No VM or network needed.
 #
 # The point of these: the wrappers deliberately do NOT use `headroom wrap`,
@@ -126,20 +126,31 @@ fi
 # not nesting it inside the `command -v tokensave` check: it is exercisable, and
 # it stays correct even when the binary is missing but a store already exists.
 #
-# run_prepare <dir> : run the emitted snippet in <dir>, exactly as the VM would.
-run_prepare() { ( cd "$1" && eval "$sync_out true" ); }
-
 tsdir="$(mktemp -d)"
 trap 'rm -rf "$tsdir"' EXIT
+mkdir -p "${tsdir}/nohome"
+
+# Every git call here — ours and the snippet's — runs with the DEVELOPER's own
+# git config out of the picture. Both the host and the VM globally ignore
+# .tokensave/, so without this the "not ignored yet" cases would silently test
+# the opposite of what they claim. HOME + XDG_CONFIG_HOME because the default
+# ignore file is $XDG_CONFIG_HOME/git/ignore (falling back to ~/.config/git/ignore);
+# GIT_CONFIG_* because core.excludesFile could point anywhere.
+ISOLATED=(env "HOME=${tsdir}/nohome" "XDG_CONFIG_HOME=${tsdir}/nohome/.config"
+          GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null)
+git_() { "${ISOLATED[@]}" git "$@"; }
+
+# run_prepare <dir> : run the emitted snippet in <dir>, exactly as the VM would.
+run_prepare() { ( cd "$1" && "${ISOLATED[@]}" bash -c "$sync_out true" ); }
 
 # A git repo whose store is not ignored yet: the entry is added and git agrees.
 repo="${tsdir}/plain"; mkdir -p "$repo/.tokensave"
-git -C "$repo" init -q
+git_ -C "$repo" init -q
 run_prepare "$repo"
 ok "adds the ignore entry to a repo that lacks it" \
   "$([[ -f "$repo/.gitignore" ]] && echo yes || echo no)"
 ok "git actually ignores the store afterwards" \
-  "$(git -C "$repo" check-ignore -q .tokensave && echo yes || echo no)"
+  "$(git_ -C "$repo" check-ignore -q .tokensave && echo yes || echo no)"
 has "entry names the directory" ".tokensave/" "$(cat "$repo/.gitignore")"
 has "entry explains itself" "tokensave code-graph index" "$(cat "$repo/.gitignore")"
 
@@ -151,21 +162,35 @@ eq "does not duplicate the entry on the next launch" "1" \
 # An existing .gitignore with NO trailing newline must not have its last line
 # joined to ours — the classic append bug.
 nonl="${tsdir}/nonl"; mkdir -p "$nonl/.tokensave"
-git -C "$nonl" init -q
+git_ -C "$nonl" init -q
 printf 'build' >"$nonl/.gitignore"          # deliberately unterminated
 run_prepare "$nonl"
 eq "preserves an unterminated last line" "build" "$(head -1 "$nonl/.gitignore")"
 ok "still ignores the store" \
-  "$(git -C "$nonl" check-ignore -q .tokensave && echo yes || echo no)"
+  "$(git_ -C "$nonl" check-ignore -q .tokensave && echo yes || echo no)"
 
 # Already ignored by a DIFFERENT pattern form (or via .git/info/exclude, global
 # ignore, a parent .gitignore…): check-ignore is the authority, so we add nothing.
 already="${tsdir}/already"; mkdir -p "$already/.tokensave"
-git -C "$already" init -q
+git_ -C "$already" init -q
 printf '.token*\n' >"$already/.gitignore"
 run_prepare "$already"
 eq "adds nothing when another pattern already covers it" ".token*" \
   "$(cat "$already/.gitignore")"
+
+# A GLOBAL ignore (~/.config/git/ignore, or any core.excludesFile) must make the
+# whole step stand down: both the host and the VM set one, so the normal outcome
+# is a completely clean `git status` and no repo diff at all. `git check-ignore`
+# honouring it is exactly why the wrapper asks git instead of grepping.
+globl="${tsdir}/global"; mkdir -p "$globl/.tokensave"
+git_ -C "$globl" init -q
+printf '.tokensave/\n' >"${tsdir}/globalignore"
+git_ -C "$globl" config core.excludesFile "${tsdir}/globalignore"
+run_prepare "$globl"
+ok "writes no repo .gitignore when a global ignore covers it" \
+  "$([[ ! -e "$globl/.gitignore" ]] && echo yes || echo no)"
+ok "leaves the working tree completely clean" \
+  "$([[ -z "$(git_ -C "$globl" status --short)" ]] && echo yes || echo no)"
 
 # Not a git repo: nothing to ignore, so no stray .gitignore appears.
 nogit="${tsdir}/nogit"; mkdir -p "$nogit/.tokensave"
@@ -175,7 +200,7 @@ ok "creates no .gitignore outside a git repo" \
 
 # No store yet (tokensave absent, so nothing was indexed): touch nothing.
 nostore="${tsdir}/nostore"; mkdir -p "$nostore"
-git -C "$nostore" init -q
+git_ -C "$nostore" init -q
 run_prepare "$nostore"
 ok "creates no .gitignore when there is no store" \
   "$([[ ! -e "$nostore/.gitignore" ]] && echo yes || echo no)"

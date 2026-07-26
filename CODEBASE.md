@@ -168,14 +168,23 @@ only after that address exists.
   mounted beneath it. `_tokensave_prepare_cmd` is immune by construction: `init` when `.tokensave/` is
   absent, `sync` when present, so each workspace is self-contained. Cost is a one-time full index on
   the first launch in a repo (capped by `FCLAUDE_TOKENSAVE_TIMEOUT`, silent, non-fatal — tokensave
-  finishes lazily on demand). Measured on 7.7.0: `sync` of an unchanged project is ~12 ms. The same
-  step **git-ignores the store**: 7.0.x appended the entry itself, 7.7.0 does not, so a 200 MB+ binary
-  index sits untracked in a fresh repo, one `git add -A` from being committed — a one-line `.gitignore`
-  diff is the cheaper trade. `git check-ignore` decides (not a grep for the literal), so a global
-  ignore file, `.git/info/exclude`, a parent `.gitignore` or any other pattern form all count as
-  already-handled and nothing is appended; outside a git repo, or before a store exists, it writes
-  nothing at all. Appends only to the `.gitignore` of the directory holding the store, and never joins
-  its entry onto an unterminated last line.
+  finishes lazily on demand). Measured on 7.7.0: `sync` of an unchanged project is ~12 ms.
+- **Keeping the code-graph store out of git — global ignore first, repo `.gitignore` as fallback** —
+  7.0.x appended a `.gitignore` entry for its own store, 7.7.0 does not, so a 200 MB+ binary index
+  otherwise sits untracked in a fresh repo, one `git add -A` from being committed. Preferred fix is a
+  **global** ignore: git reads `$XDG_CONFIG_HOME/git/ignore` (→ `~/.config/git/ignore`) **by default**,
+  with no `core.excludesFile` needed. `site.yml` provisions it in the VM (`lineinfile`, so a user's own
+  entries are never clobbered); the host side is the user's own one-liner (see README) — install.sh
+  deliberately does NOT edit a personal git config. When neither covers it, `_tokensave_prepare_cmd`
+  appends the entry to the repo. `git check-ignore` is the test rather than a grep for the literal, so
+  a global ignore, `.git/info/exclude`, a parent `.gitignore` or any other pattern form all count as
+  already-handled — which is what makes the fallback **stand down** the moment a global ignore exists,
+  leaving the repo completely untouched. Outside a git repo, or before a store exists, it writes
+  nothing. Appends only to the `.gitignore` of the directory holding the store, and never joins its
+  entry onto an unterminated last line. Note for anyone extending `test-headroom-launch.sh`: those
+  cases run git under `HOME`/`XDG_CONFIG_HOME`/`GIT_CONFIG_*` overrides, because a developer machine
+  that globally ignores `.tokensave/` would otherwise make every "not ignored yet" case test the
+  opposite of what it claims.
 - **tokensave never self-updates** — headroom's `ensure_tokensave()` returns early whenever the binary
   exists, so it installs ONCE and then stays pinned forever; ours sat at 7.0.2 while 7.7.0 shipped.
   The weekly `fclaude-headroom-update.sh` now runs `tokensave upgrade`, guarded by the same
