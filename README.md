@@ -90,6 +90,12 @@ its Prometheus metrics are shipped to **Grafana Cloud**.
 - **Proxy:** a persistent `fclaude-headroom.service` in the VM (loopback `:8787`). The wrappers set
   `ANTHROPIC_MODEL=<FCLAUDE_HEADROOM_MODEL>[1m]` + `--1m` so the **1M context window** stays active on
   your chosen model (default `claude-opus-5`). `FCLAUDE_HEADROOM_ENABLE=0` bypasses Headroom entirely.
+- **Tool search:** `wrap` sets `ENABLE_TOOL_SEARCH=true` so Claude Code keeps deferring its tool
+  schemas (11 tools / 40 KB per request instead of 147 / 170 KB) and loads them on demand through its
+  own client-side `ToolSearch`. The proxy's *own* server-side deferral is pinned **off**
+  (`HEADROOM_TOOL_SEARCH=off`): stacking the two made the model answer searches with `server_tool_use`
+  blocks the VS Code extension can't render (`Unsupported content type: server_tool_use`) and made
+  every deferred tool report "no tools match". See [CODEBASE.md](CODEBASE.md) for the full trace.
 - **Updates:** a newer Headroom is *staged* weekly (alongside the apt run) into a versioned venv and
   only activated at boot or when no session is running — the live proxy is never restarted under load.
 - **Metrics:** an in-VM `prometheus --agent` scrapes `:8787/metrics` every 5 min and `remote_write`s to
