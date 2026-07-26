@@ -34,6 +34,7 @@ jobs:
         run: |
           bash test/test-staleness.sh
           bash test/test-mount-hold.sh
+          bash test/test-headroom-launch.sh
 
       - name: Ansible syntax-check (rendered playbook)
         run: |
@@ -46,7 +47,6 @@ jobs:
           inject __APT_UPGRADE_SERVICE_B64__     vm/update/fclaude-apt-upgrade.service
           inject __APT_UPGRADE_TIMER_B64__       vm/update/fclaude-apt-upgrade.timer
           inject __HEADROOM_SERVICE_B64__        vm/headroom/fclaude-headroom.service
-          inject __HEADROOM_QUIET_B64__          vm/headroom/headroom-quiet
           inject __HEADROOM_ACTIVATE_SH_B64__    vm/headroom/fclaude-headroom-activate.sh
           inject __HEADROOM_ACTIVATE_SERVICE_B64__ vm/headroom/fclaude-headroom-activate.service
           inject __HEADROOM_UPDATE_SH_B64__      vm/update/fclaude-headroom-update.sh

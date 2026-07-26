@@ -10,7 +10,7 @@ design rationale and [README.md](README.md) for usage.
 host wrapper (~/.local/bin/fclaude)
   → ensure_vm_running (virsh, system libvirt via 'libvirt' group)
   → mount_workspace   (bind-mount $HOME/<rel> into ~/.fclaude/exports, exportfs, NFSv4 mount in VM)
-  → ssh fclaude@192.168.122.10 "cd /home/fclaude/<rel> && exec headroom-quiet wrap claude --1m --no-proxy -- --dangerously-skip-permissions"
+  → ssh fclaude@192.168.122.10 "cd /home/fclaude/<rel> || exit 1; <tokensave sync>; exec env ANTHROPIC_BASE_URL=… ANTHROPIC_MODEL=<model>[1m] … claude --settings '{…}' --dangerously-skip-permissions"
   → unmount_workspace on EXIT (reference counted)
 
 VM "fclaude" (Ubuntu 24.04, KVM): uid-1000 fclaude user, sudo NOPASSWD, docker, node, a self-updating
@@ -91,7 +91,7 @@ only after that address exists.
 | `cloud-init/user-data.tmpl` | First boot: create `fclaude` (uid 1000, sudo NOPASSWD) + `maint` users, inject pubkeys, growpart/resize, install `ansible`+`git`, drop the playbook via `write_files` (base64), run it locally (`-e host_user=<USER> -e fclaude_update_apt=<0\|1>`). |
 | `cloud-init/network-config.tmpl` | NoCloud netplan v2 (rendered into 50-cloud-init.yaml at first boot via `cloud-localds -N`): DHCP on the pinned NIC **plus a conservative `mtu` (`FCLAUDE_VM_MTU`, default 1400)** so the VM tolerates host-side tunnels (e.g. WireGuard ~1420) without black-holing large TLS responses. Baked into the primary file — **never** a second netplan drop-in (a second file re-declaring the interface conflicts with `match`/`set-name`), and **never** applied live with `netplan apply` over ssh (that disrupts the running NIC and needs a reboot to recover). |
 | `ansible/site.yml` | In-VM provisioning (runs IN the VM, `-c local`): base tools, **Docker** (get.docker.com, fclaude in docker group), **Node 22 (for user projects, not Claude)**, **native Claude Code** (`claude.ai/install.sh \| bash`, run as fclaude) + `autoUpdatesChannel: latest` merged into `settings.json`, headless-chrome runtime libs (no browser), `/home/fclaude` ownership, host-home bind mount, and the **weekly apt-upgrade** assets (script + service + timer, enabled when `fclaude_update_apt=1`) + seeded `last-apt-success`. Shipped base64-embedded in the seed; the `vm/update/*` assets are injected into `__*_B64__` placeholders by install.sh before embedding. |
-| `headroom/` | Headroom proxy assets embedded into `site.yml` by install.sh: `fclaude-headroom.service` (persistent proxy on loopback `:8787`, `--no-http2`), `headroom-quiet` (Click-banner→stderr shim), `fclaude-headroom-activate.{sh,service}` (repoint `current` + restart at boot / when idle). |
+| `headroom/` | Headroom proxy assets embedded into `site.yml` by install.sh: `fclaude-headroom.service` (persistent proxy on loopback `:8787`, `--no-http2`), `fclaude-headroom-activate.{sh,service}` (repoint `current` + restart at boot / when idle). |
 | `metrics/` | `prometheus.yml.tmpl` (5m scrape of `:8787`, remote_write, `password_file`) + `fclaude-metrics.service` (`prometheus --agent`, gated on the delivered secret). |
 | `libvirt/domain.xml.tmpl` | KVM domain: 8 GiB / 6 vCPU, q35, **named CPU model `FCLAUDE_VM_CPU_MODEL` (EPYC-Milan) — NOT host-passthrough** (raw Zen4 passthrough corrupts guest memory; see below), raw vda (cache=none, discard=unmap), seed cdrom, virtio NIC with fixed MAC, guest agent, virtio-rng. |
 
@@ -133,17 +133,32 @@ only after that address exists.
   multi-process SIGSEGV (incl. PID 1), VM dying every few minutes. Traced to an AVX-512/Zen4 path
   miscomputing under KVM; a KVM-validated model without AVX-512 (`EPYC-Milan`) ran 80+ min clean.
   (`FCLAUDE_VM_CPU_MODEL`, `vm/libvirt/domain.xml.tmpl`)
-- **Headroom compression proxy (in-VM) + `headroom-quiet wrap`** — Claude's API traffic runs through
-  a shared in-VM Headroom proxy (`fclaude-headroom.service`, loopback `:8787`). The wrappers launch it
-  via **`headroom-quiet wrap claude`**, NOT a hand-set `ANTHROPIC_BASE_URL`, so headroom's own
-  workarounds apply automatically (incl. `--1m` for the 1M window and tool-search #746). `wrap` prints
-  a startup banner to **stdout**, which corrupted the VS Code stdio JSON protocol — `headroom-quiet` is
-  a shim that monkeypatches `click.echo/secho` to stderr, keeping stdout clean, which is what lets BOTH
-  the interactive and VS Code wrappers use `wrap`. `--1m` sets `ANTHROPIC_MODEL=<model>[1m]` (env
-  overrides settings.json), so the model to run is a config knob (`FCLAUDE_HEADROOM_MODEL`, default
-  `claude-opus-5`) — verified opus-5 via the session transcript. Replaces the old llm.log proxy
-  entirely (no `HTTPS_PROXY`, no host bridge); removal strips any stale llm.log block from the VM's
-  `/etc/environment`. (`vm/headroom/`, `lib/common.sh` `_headroom_launch`)
+- **Headroom compression proxy (in-VM), driven by env — NEVER `headroom wrap`** — Claude's API traffic
+  runs through a shared in-VM Headroom proxy (`fclaude-headroom.service`, loopback `:8787`). The
+  wrappers point Claude at it themselves and **must not** call `headroom wrap claude`: wrap
+  unconditionally writes `env.ANTHROPIC_BASE_URL` into `<cwd>/.claude/settings.local.json`, plus a
+  `SessionStart` self-heal hook and a `.headroom_wrap_marker.json` sidecar (headroom 0.32.1
+  `wrap.py:4630`/`:4646`, their #951/#2221), and offers **no flag or env var to turn it off**. Our cwd
+  is an NFS share of a **host** directory, so those writes land in the user's real repo — where a
+  `claude` running *outside* the VM reads `ANTHROPIC_BASE_URL=127.0.0.1:8787` and dies with
+  ConnectionRefused. It fired even when Claude was never engaged: the VS Code extension runs
+  `fclaude-vscode` for *every* claude process, so just opening the folder poisoned the repo. On clean
+  exit wrap restores the env key but **leaves the hook**; only `headroom unwrap` removes it.
+  What the launch line reproduces instead (all verified against wrap.py and on the wire in
+  `~/.headroom/logs/proxy.log`): `ANTHROPIC_BASE_URL`; `ANTHROPIC_MODEL=<model>[1m]`, which is the
+  *entirety* of `--1m` (`wrap.py:4676`→`:229`) — Claude Code converts the `[1m]` suffix into the
+  `context-1m-2025-08-07` beta header, and the env overrides settings.json, so the model is a config
+  knob (`FCLAUDE_HEADROOM_MODEL`, default `claude-opus-5`); `ENABLE_TOOL_SEARCH=true` (#746, below);
+  and `ANTHROPIC_CUSTOM_HEADERS: X-Headroom-Project` for per-project savings attribution
+  (percent-encoded exactly like headroom's `quote(name, safe="-_.() ")`). The base URL is *also*
+  passed as inline `--settings` JSON — the one job the settings file did, since cc-daemon spawns
+  conversation workers that re-read settings rather than inherit the environment (#951); `--settings`
+  takes a JSON **string**, so no file is written anywhere. MCP registration (headroom retrieve +
+  tokensave) is durable user-scope state in the VM's `~/.claude.json` that wrap only re-asserted —
+  `site.yml` provisions it once. The one genuinely per-session job wrap did, the tokensave code-graph
+  refresh (`wrap.py:1542`), is now `_tokensave_sync_cmd`. Replaces the old llm.log proxy entirely (no
+  `HTTPS_PROXY`, no host bridge); removal strips any stale llm.log block from the VM's
+  `/etc/environment`. (`vm/headroom/`, `lib/common.sh` `_headroom_launch`, `test/test-headroom-launch.sh`)
 - **`HEADROOM_TOOL_SEARCH=off` — the two tool-deferral layers must not stack** — Claude Code already
   defers its own tool schemas and resolves them **client-side** through its own `ToolSearch` tool;
   `headroom wrap` keeps that on by setting `ENABLE_TOOL_SEARCH=true` (needed because Claude Code

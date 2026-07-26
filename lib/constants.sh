@@ -77,15 +77,25 @@ FCLAUDE_UPDATE_WARN_DAYS="15"     # `fclaude` warns at startup if the last SUCCE
 
 # --- Headroom context-compression proxy (in-VM) ---
 # Headroom (headroom-ai) runs as a shared proxy inside the VM; the fclaude
-# wrappers launch Claude via `headroom wrap claude` so its API traffic is
-# compressed and measured. Set FCLAUDE_HEADROOM_ENABLE=0 to run plain `claude`.
+# wrappers point Claude at it with ANTHROPIC_BASE_URL so its API traffic is
+# compressed and measured. They deliberately do NOT use `headroom wrap`, which
+# writes proxy settings into the workspace's .claude/settings.local.json — i.e.
+# into the mounted HOST repo, breaking any claude run outside the VM. See
+# lib/common.sh `_headroom_launch`. FCLAUDE_HEADROOM_ENABLE=0 → plain `claude`.
 FCLAUDE_HEADROOM_ENABLE="1"
 FCLAUDE_HEADROOM_PORT="8787"      # the shared proxy service's loopback port
 # 1M context window: routing Claude through a custom base URL disables the 1M
-# beta (headroom #1158) unless we pass `--1m`, which sets ANTHROPIC_MODEL. That
-# env overrides settings.json, so we must name the model. Set to your model to
-# run <model>[1m]; empty = no --1m (respect settings.json, no 1M via the proxy).
+# beta (headroom #1158) unless the model id carries the `[1m]` suffix — Claude
+# Code turns that suffix into the `context-1m` beta header. The wrapper appends
+# it and passes the result as ANTHROPIC_MODEL, which overrides settings.json, so
+# we must name the model. Empty = don't set it (respect settings.json, no 1M).
 FCLAUDE_HEADROOM_MODEL="claude-opus-5"
+# tokensave code-graph refresh before each session (`headroom wrap` used to do
+# this; the wrappers now run it themselves). 0 = skip. The timeout caps a cold
+# index of a huge repo — tokensave also re-checks staleness on demand, so an
+# expired sync is never fatal.
+FCLAUDE_TOKENSAVE_SYNC="1"
+FCLAUDE_TOKENSAVE_TIMEOUT="60"
 
 # --- Grafana Cloud metrics export (in-VM prometheus agent) ---
 # An in-VM `prometheus --agent` scrapes Headroom's /metrics every 5m and

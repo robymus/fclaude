@@ -94,27 +94,99 @@ ssh_vm() {
   ssh -n "${opts[@]}" "${SSH_USER}@${VM_IP}" "$@"
 }
 
-# Headroom launch prefix for the wrappers. Claude is launched via `headroom-quiet
-# wrap claude` so its API traffic is compressed + measured by the shared in-VM
-# proxy. `headroom-quiet` is a Click-banner-to-stderr shim so stdout stays clean —
-# this is what lets BOTH the interactive (PTY) and the VS Code (stdio JSON) paths
-# use `wrap`. Emits the command word(s) that PRECEDE the claude args; the caller
-# does `… && exec $(_headroom_launch) <claude-args>`.
-#   FCLAUDE_HEADROOM_ENABLE=0 → plain `claude` (bypass Headroom).
-#   FCLAUDE_HEADROOM_MODEL set → `env ANTHROPIC_MODEL=<m>` + `--1m` (1M context on
-#     that model; the env survives `exec` via `env`, and overrides settings.json).
-# `--no-proxy` reuses the persistent fclaude-headroom.service; `--` passes every
-# following arg straight to claude.
+# Project label for the X-Headroom-Project header. Percent-encodes exactly what
+# Headroom's own `urllib.parse.quote(name, safe="-_.() ")` leaves alone, so the
+# proxy's per-project savings attribution keys stay identical to the ones `wrap`
+# produced (and the header stays visible-ASCII, RFC 7230). Iterates BYTES —
+# LC_ALL=C makes ${#s} / ${s:i:1} byte-wise — so a multi-byte name encodes to
+# %XX per byte like the Python side.
+_headroom_project_label() {
+  local s="$1" out="" c i
+  local LC_ALL=C
+  for ((i = 0; i < ${#s}; i++)); do
+    c="${s:i:1}"
+    case "$c" in
+      [A-Za-z0-9._~-] | ' ' | '(' | ')') out+="$c" ;;
+      *) out+="$(printf '%%%02X' "'${c}")" ;;
+    esac
+  done
+  printf '%s' "$out"
+}
+
+# Headroom launch prefix for the wrappers. Claude is launched DIRECTLY, with the
+# environment `headroom wrap claude` would have set — NOT through `wrap` itself.
+#
+# Why not `wrap`: it unconditionally writes `env.ANTHROPIC_BASE_URL` into
+# `<cwd>/.claude/settings.local.json`, plus a SessionStart self-heal hook and a
+# `.headroom_wrap_marker.json` sidecar (headroom 0.32.1 `wrap.py:4630`/`:4646`,
+# their issues #951/#2221). There is no flag or env var that disables it. Our cwd
+# is an NFS share of a HOST directory, so those writes land in the real repo:
+# a `claude` running OUTSIDE the VM then reads ANTHROPIC_BASE_URL=127.0.0.1:8787
+# and dies with ConnectionRefused — the proxy only exists in the VM. Merely
+# opening the repo in VS Code (which runs fclaude-vscode for every claude
+# process) was enough to break a host-side session. wrap also leaves the hook
+# behind on clean exit; only `headroom unwrap` removes it.
+#
+# Everything wrap contributed for us is reproduced here (checked against wrap.py):
+#   ANTHROPIC_BASE_URL        the shared in-VM proxy — `--no-proxy` already meant
+#                             wrap never started one of its own.
+#   ANTHROPIC_MODEL=<m>[1m]   the ENTIRETY of `--1m` (wrap.py:4676 → :229): Claude
+#                             Code turns the `[1m]` suffix into the `context-1m`
+#                             beta header, which is what actually unlocks the 1M
+#                             window. Verified on the wire in the proxy log.
+#   ENABLE_TOOL_SEARCH=true   Claude Code disables its client-side tool deferral
+#                             behind a custom base URL (headroom #746).
+#   ANTHROPIC_CUSTOM_HEADERS  X-Headroom-Project, for per-project savings
+#                             attribution in the Grafana dashboards.
+# The base URL is ALSO passed as inline `--settings` JSON, because that is the
+# one thing the settings file was for: cc-daemon spawns conversation workers that
+# re-read settings instead of inheriting the launcher's environment (#951).
+# `--settings` accepts a JSON *string*, so it needs no file, anywhere.
+#
+# MCP registration (headroom retrieve + tokensave) is durable USER-scope state in
+# the VM's ~/.claude.json, provisioned once by site.yml — wrap only re-asserted
+# it on every start. The one genuinely per-session job it did is the tokensave
+# code-graph refresh; see _tokensave_sync_cmd.
+#
+# Emits the command word(s) that PRECEDE the claude args; the caller does
+# `… ; exec $(_headroom_launch "$dir") <claude-args>`. A caller-supplied
+# `--settings` in <claude-args> wins (Claude Code takes the last one).
+#   $1 = workspace dir, for the project label (defaults to the VM mount base).
+#   FCLAUDE_HEADROOM_ENABLE=0 → plain `claude` (bypass Headroom entirely).
 _headroom_launch() {
+  local dir="${1:-${VM_MOUNT_BASE:-}}"
   if [[ "${FCLAUDE_HEADROOM_ENABLE:-1}" != "1" ]]; then
     printf 'claude'
     return
   fi
-  if [[ -n "${FCLAUDE_HEADROOM_MODEL:-}" ]]; then
-    printf 'env ANTHROPIC_MODEL=%q headroom-quiet wrap claude --1m --no-proxy --' "$FCLAUDE_HEADROOM_MODEL"
-  else
-    printf 'headroom-quiet wrap claude --no-proxy --'
-  fi
+  local proxy="http://127.0.0.1:${FCLAUDE_HEADROOM_PORT:-8787}"
+  local -a kv=("ANTHROPIC_BASE_URL=${proxy}" "ENABLE_TOOL_SEARCH=true")
+  [[ -n "${FCLAUDE_HEADROOM_MODEL:-}" ]] &&
+    kv+=("ANTHROPIC_MODEL=${FCLAUDE_HEADROOM_MODEL}[1m]")
+  local label
+  label="$(_headroom_project_label "$(basename -- "${dir:-/}")")"
+  [[ -n "$label" ]] && kv+=("ANTHROPIC_CUSTOM_HEADERS=X-Headroom-Project: ${label}")
+
+  printf 'env'
+  printf ' %q' "${kv[@]}"
+  printf ' claude --settings %q' "{\"env\":{\"ANTHROPIC_BASE_URL\":\"${proxy}\"}}"
+}
+
+# Remote-shell snippet that refreshes the tokensave code graph for the workspace
+# we are about to launch in. `headroom wrap` ran this on every start
+# (wrap.py:1542) and it is the ONLY per-session work we give up by not calling
+# wrap, so we do it ourselves. Emits a `;`-terminated snippet to run AFTER the
+# cd into the workspace (relies on cwd, like tokensave itself).
+#
+# Silent and non-fatal by construction: any stray stdout would corrupt the VS
+# Code stdio JSON protocol, and tokensave re-checks staleness on demand anyway,
+# so a failure here costs nothing. Emits nothing at all when disabled.
+_tokensave_sync_cmd() {
+  [[ "${FCLAUDE_TOKENSAVE_SYNC:-1}" == "1" ]] || return 0
+  local t="${FCLAUDE_TOKENSAVE_TIMEOUT:-60}"
+  printf 'if command -v tokensave >/dev/null 2>&1; then '
+  printf 'if [ -d .tokensave ]; then timeout %s tokensave sync; ' "$t"
+  printf 'else timeout %s tokensave init; fi >/dev/null 2>&1 || true; fi;' "$t"
 }
 
 # Activate a newer STAGED Headroom version, but only when this is the "first

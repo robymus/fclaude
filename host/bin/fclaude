@@ -178,13 +178,16 @@ if ((${#CLAUDE_ARGS[@]})); then
   extra="$(printf '%q ' "${CLAUDE_ARGS[@]}")"
 fi
 
-launch="$(_headroom_launch)"
+# `cd … || exit 1;` rather than `cd … && exec …`: a `;`-separated tokensave sync
+# sits between them, and with `&&` only the FIRST command would be guarded — a
+# failed cd would still exec claude, in the wrong directory.
 if [[ "$DO_MOUNT" == 1 ]]; then
   rel="$(relpath_under_home "$DIR")"
   abs="$(cd "$DIR" && pwd -P)"
   mount_workspace "$abs"
   trap 'unmount_workspace "$abs"' EXIT
-  ssh_vm_tty "${CLAUDE_LOGIN_ENV} cd ${VM_MOUNT_BASE%/}/${rel} && exec ${launch} --dangerously-skip-permissions ${extra}"
+  ssh_vm_tty "${CLAUDE_LOGIN_ENV} cd ${VM_MOUNT_BASE%/}/${rel} || exit 1; $(_tokensave_sync_cmd) exec $(_headroom_launch "$abs") --dangerously-skip-permissions ${extra}"
 else
-  ssh_vm_tty "${CLAUDE_LOGIN_ENV} cd ${VM_MOUNT_BASE} && exec ${launch} --dangerously-skip-permissions ${extra}"
+  # No workspace mounted: nothing to index, so no tokensave sync.
+  ssh_vm_tty "${CLAUDE_LOGIN_ENV} cd ${VM_MOUNT_BASE} || exit 1; exec $(_headroom_launch "$VM_MOUNT_BASE") --dangerously-skip-permissions ${extra}"
 fi
