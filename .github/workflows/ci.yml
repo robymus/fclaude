@@ -31,7 +31,9 @@ jobs:
             test/*.sh
 
       - name: Unit tests
-        run: bash test/test-staleness.sh
+        run: |
+          bash test/test-staleness.sh
+          bash test/test-mount-hold.sh
 
       - name: Ansible syntax-check (rendered playbook)
         run: |

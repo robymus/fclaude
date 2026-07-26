@@ -19,6 +19,9 @@ Usage: fclaude [options] [-- claude-args...]
 Options:
   --dir <path>       Mount and run in <path> instead of the current directory.
   --no-mount         Run claude in the VM home with nothing mounted.
+  --mount <dir>...   Mount the given directories into the VM and hold them until
+                     Ctrl+C (then unmount). Does not start claude. Useful when
+                     you want a workspace visible in the VM for something else.
   -m, --maintenance  Open an interactive shell in the VM as the maintenance user.
   -s, --status       Print VM state, resources, and active workspaces (no start).
   --cleanup <ws>     Force-unmount one stuck workspace and clear its refcount.
@@ -43,11 +46,15 @@ EOF
 DIR="$PWD"
 DO_MOUNT=1
 declare -a CLAUDE_ARGS=()
+declare -a MOUNT_DIRS=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dir)           DIR="${2:?--dir needs a path}"; shift 2 ;;
     --no-mount)      DO_MOUNT=0; shift ;;
+    --mount)         MODE_MOUNT=1; shift
+                     # Greedy: consume every following non-option word as a dir.
+                     while [[ $# -gt 0 && "$1" != -* ]]; do MOUNT_DIRS+=("$1"); shift; done ;;
     -m|--maintenance) MODE_MAINT=1; shift ;;
     -s|--status)     MODE_STATUS=1; shift ;;
     --cleanup)       MODE_CLEANUP=1; CLEANUP_TARGET="${2:?--cleanup needs a workspace path}"; shift 2 ;;
@@ -102,6 +109,60 @@ if [[ -n "${MODE_MAINT:-}" ]]; then
   ensure_vm_running
   ssh_maint
   exit $?
+fi
+
+if [[ -n "${MODE_MOUNT:-}" ]]; then
+  ((${#MOUNT_DIRS[@]})) || die "--mount needs at least one directory"
+
+  # Resolve and validate everything first, so a bad path fails before any mount.
+  declare -a MOUNT_ABS=()
+  declare -A MOUNT_SEEN=()
+  for d in "${MOUNT_DIRS[@]}"; do
+    abs="$(cd "$d" 2>/dev/null && pwd -P)" || die "directory does not exist: $d"
+    rel="$(relpath_under_home "$abs")"
+    [[ "$rel" == "." ]] && die "refusing to share all of $SHARE_ROOT; pick a subdirectory"
+    # Skip repeats — the same dir named twice would only inflate its refcount.
+    if [[ -z "${MOUNT_SEEN[$abs]:-}" ]]; then
+      MOUNT_SEEN[$abs]=1
+      MOUNT_ABS+=("$abs")
+    fi
+  done
+
+  ensure_vm_running
+
+  # Release, in reverse order, whatever we managed to mount — including when a
+  # mount partway through the list fails.
+  declare -a HELD=()
+  # shellcheck disable=SC2317  # invoked indirectly by the EXIT trap below
+  release_held() {
+    local i
+    for ((i = ${#HELD[@]} - 1; i >= 0; i--)); do
+      unmount_workspace "${HELD[i]}" || true
+    done
+  }
+  trap release_held EXIT
+
+  for abs in "${MOUNT_ABS[@]}"; do
+    mount_workspace "$abs"
+    HELD+=("$abs")
+    info "  $abs -> ${VM_MOUNT_BASE%/}/$(relpath_under_home "$abs")"
+  done
+
+  info "${#HELD[@]} workspace(s) mounted. Press Ctrl+C to unmount and exit."
+
+  # Idle until interrupted. `wait` on a backgrounded sleep is interruptible, so
+  # the trap fires immediately instead of at the end of a sleep interval.
+  hold_stop=0
+  trap 'hold_stop=1' INT TERM
+  while ((hold_stop == 0)); do
+    sleep 86400 &
+    sleep_pid=$!
+    wait "$sleep_pid" 2>/dev/null || true
+    kill "$sleep_pid" 2>/dev/null || true
+  done
+
+  info "unmounting…"
+  exit 0
 fi
 
 # --- Normal run -----------------------------------------------------------

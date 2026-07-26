@@ -42,6 +42,7 @@ claude                     # authenticate, then exit
 fclaude                    # mount current dir, run claude there (yolo mode)
 fclaude --dir ~/work/proj  # mount and run in a specific dir
 fclaude --no-mount         # run claude in /home/fclaude with nothing mounted
+fclaude --mount ~/a ~/b    # just mount these dirs in the VM, hold until Ctrl+C, then unmount
 fclaude --status           # show VM state, resources, and active workspaces (no start)
 fclaude --update           # update Claude Code + system packages now (bypasses the network gate)
 fclaude --maintenance      # ssh in as the maintenance (admin) user
