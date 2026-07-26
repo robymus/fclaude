@@ -25,6 +25,13 @@ This creates a 32 GiB VM disk at `~/.fclaude/fclaude-disk`, boots an Ubuntu 24.0
 with Ansible (Node + Claude Code + Docker), configures host NFS sharing and firewall rules, and
 installs the wrapper scripts into `~/.local/bin`.
 
+To redeploy **only** the host-side scripts after editing a wrapper or pulling a change under
+`host/` or `lib/` — no VM, no packages, no system config, no sudo:
+
+```bash
+./install.sh --wrappers-only
+```
+
 Claude Code is installed with its **native installer** (a self-contained binary under the VM
 account's `~/.local`, on the `latest` channel) so it can update itself in the background even
 while sessions are running. Node stays for your own project work, not for Claude.

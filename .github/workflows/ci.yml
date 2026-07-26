@@ -35,6 +35,7 @@ jobs:
           bash test/test-staleness.sh
           bash test/test-mount-hold.sh
           bash test/test-headroom-launch.sh
+          bash test/test-wrappers-only.sh
 
       - name: Ansible syntax-check (rendered playbook)
         run: |

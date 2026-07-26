@@ -24,7 +24,7 @@ Host firewall (nftables table 'fclaude') blocks VM→host privileged ports (<102
 ### Top level
 | File | Role |
 |---|---|
-| `install.sh` | Host installer. 13 ordered steps: preflight → apt → dirs → disk (guarded) → ssh keys → cloud-init seed → libvirt net+DHCP → define/start VM → NFS+firewall+sudoers → systemd units → wrappers → config/vm-info → wait-for-provision. Idempotent where practical. Uses `sudo virsh` during install; renders templates via the `render()` helper. |
+| `install.sh` | Host installer. 13 ordered steps: preflight → apt → dirs → disk (guarded) → ssh keys → cloud-init seed → libvirt net+DHCP → define/start VM → NFS+firewall+sudoers → systemd units → wrappers → config/vm-info → wait-for-provision. Idempotent where practical. Uses `sudo virsh` during install; renders templates via the `render()` helper. **`--wrappers-only`** runs `install_host_scripts()` (step 11) and nothing else — the host scripts are plain, untemplated copies, so editing a wrapper does not need minutes of VM provisioning to deploy; no sudo, no network, no VM. It also reports config knobs the existing `~/.fclaude/config` predates (a full install never rewrites an existing config either — it drops a `.new` beside it). |
 | `uninstall.sh` | Reverses install. Heavy confirmation (typed phrase). **Never deletes the disk silently** — separate `DELETE DISK` opt-in prompt at the very end. |
 | `README.md` | User-facing quick start. |
 | `REQUIREMENTS.md` | Original requirements (source of truth for intent). |
