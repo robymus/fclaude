@@ -82,6 +82,9 @@ Tunables live in `~/.fclaude/config` (`FCLAUDE_UPDATE_APT`, `_MIN_MBIT`, `_PROBE
 ./host/bin/fclaude-update-setup        # also retrofits auto-update onto a pre-existing VM
 ```
 
+Run it after pulling a change under `vm/update/` too: those scripts are baked into the VM at first
+boot, so this is the only thing that refreshes them on a VM that already exists.
+
 ### VS Code
 
 Set the Claude extension's **`claudeCode.claudeProcessWrapper`** setting to

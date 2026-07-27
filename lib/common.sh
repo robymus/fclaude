@@ -172,9 +172,25 @@ _headroom_launch() {
   printf ' claude --settings %q' "{\"env\":{\"ANTHROPIC_BASE_URL\":\"${proxy}\"}}"
 }
 
-# Remote-shell snippet that prepares the tokensave code graph for the workspace
-# we are about to launch in. Emits a `;`-terminated snippet to run AFTER the cd
-# into the workspace — both steps are cwd-relative, like tokensave itself.
+# Remote-shell snippet that prepares tokensave for the workspace we are about to
+# launch in. Emits a `;`-terminated snippet to run AFTER the cd into the
+# workspace — the graph steps are cwd-relative, like tokensave itself.
+#
+# 0. Silence the update notice, for the whole session. tokensave's MCP server
+#    PREPENDS "⚠️ tokensave vX is installed, but vY is available. Run
+#    `tokensave upgrade` to update." as an extra content block to EVERY tool
+#    result (mcp/server.rs check_version_update) — inside the payload, not on
+#    stderr — so one minor release upstream corrupts every tokensave tool result
+#    until the binary is upgraded. TOKENSAVE_UPDATE_CHECK=0 turns off exactly
+#    that passive notice (init/sync/status + the MCP server); explicit
+#    `tokensave upgrade` and `doctor` ignore the flag, so the weekly upgrade in
+#    fclaude-headroom-update.sh still works. Exported rather than set per MCP
+#    server, because `tokensave reinstall` (which follows every upgrade)
+#    REWRITES that registration and would drop an `env` we put there — and
+#    because the export also reaches tokensave's own Claude Code hooks, which
+#    inherit it like the MCP server does. The VM's ~/.profile carries the same
+#    flag for sessions the wrappers did not launch (site.yml); this is what
+#    covers every VM that predates it, without reprovisioning.
 #
 # 1. Refresh the graph. `headroom wrap` did this on every start (wrap.py:1542)
 #    and it is the ONLY per-session work we give up by not calling wrap. The
@@ -193,8 +209,10 @@ _headroom_launch() {
 #
 # Silent and non-fatal by construction: any stray stdout would corrupt the VS
 # Code stdio JSON protocol, and tokensave re-checks staleness on demand anyway,
-# so a failure here costs nothing. Emits nothing at all when disabled.
+# so a failure here costs nothing. FCLAUDE_TOKENSAVE_SYNC=0 drops the graph work
+# (steps 1–2); the quiet flag is not a sync knob and stays either way.
 _tokensave_prepare_cmd() {
+  printf 'export TOKENSAVE_UPDATE_CHECK=0;'
   [[ "${FCLAUDE_TOKENSAVE_SYNC:-1}" == "1" ]] || return 0
   # Quoted heredoc: every $ and \ below belongs to the REMOTE shell, not to us.
   # __T__ is the only thing we substitute. $() strips the trailing newline, so
@@ -212,6 +230,28 @@ fi
 REMOTE
   )"
   printf '%s;' "${snippet//__T__/${FCLAUDE_TOKENSAVE_TIMEOUT:-60}}"
+}
+
+# Remote-shell snippet that makes the quiet flag above permanent inside the VM,
+# for claude sessions the wrappers did not launch (a shell in the VM, a hook run
+# by hand). site.yml writes the same two lines at provision time; this is the
+# retrofit for a VM built before it, run by fclaude-update-setup.
+#
+# ~/.profile is the right file: it is what the wrappers' CLAUDE_LOGIN_ENV sources
+# and what a login shell reads, and everything claude spawns — MCP servers,
+# tokensave's own hooks — inherits the environment from there. NOT the MCP
+# server's `env`: `tokensave reinstall` runs after every upgrade and rewrites
+# that registration, which would drop it.
+#
+# Idempotent on the marker `export TOKENSAVE_UPDATE_CHECK=`, so a changed value
+# is left alone rather than duplicated. The leading newline keeps an unterminated
+# last line from being joined onto ours — same care as the .gitignore append.
+_tokensave_quiet_profile_cmd() {
+  # Quoted heredoc: $HOME and the \n escapes belong to the REMOTE shell.
+  cat <<'REMOTE'
+grep -qs '^export TOKENSAVE_UPDATE_CHECK=' "$HOME/.profile" || \
+  printf '\n# tokensave: its update notice is injected into MCP tool results, not stderr\nexport TOKENSAVE_UPDATE_CHECK=0\n' >>"$HOME/.profile"
+REMOTE
 }
 
 # Activate a newer STAGED Headroom version, but only when this is the "first

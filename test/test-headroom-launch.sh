@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Unit tests for the pure Headroom launch helpers in lib/common.sh
-# (_headroom_launch / _headroom_project_label / _tokensave_prepare_cmd).
+# (_headroom_launch / _headroom_project_label / _tokensave_prepare_cmd /
+# _tokensave_quiet_profile_cmd).
 # No VM or network needed.
 #
 # The point of these: the wrappers deliberately do NOT use `headroom wrap`,
@@ -109,6 +110,10 @@ FCLAUDE_HEADROOM_ENABLE=1
 
 # --- _tokensave_prepare_cmd -----------------------------------------------
 sync_out="$(_tokensave_prepare_cmd)"
+# The update notice is not cosmetic: tokensave's MCP server prepends it as an
+# extra content block to every tool RESULT, so a newer release upstream corrupts
+# every tokensave tool call until the binary is upgraded.
+has "the update notice is silenced" "export TOKENSAVE_UPDATE_CHECK=0" "$sync_out"
 has "sync incrementally updates an existing graph" "tokensave sync" "$sync_out"
 has "sync initializes a repo with no graph yet"    "tokensave init" "$sync_out"
 has "sync is skipped when tokensave is absent"     "command -v tokensave" "$sync_out"
@@ -205,9 +210,48 @@ run_prepare "$nostore"
 ok "creates no .gitignore when there is no store" \
   "$([[ ! -e "$nostore/.gitignore" ]] && echo yes || echo no)"
 
-# Last knob in the file, so it is not restored afterwards.
+# --- _tokensave_quiet_profile_cmd, executed for real ----------------------
+# The VM-side half of the same flag: what fclaude-update-setup runs to retrofit
+# a VM provisioned before site.yml wrote it. Run against a throwaway HOME.
+quiet_cmd="$(_tokensave_quiet_profile_cmd)"
+run_quiet() { env "HOME=$1" bash -c "$quiet_cmd"; }
+
+prof="${tsdir}/profilehome"; mkdir -p "$prof"
+run_quiet "$prof"
+has "writes the export to a HOME with no .profile at all" \
+  "export TOKENSAVE_UPDATE_CHECK=0" "$(cat "$prof/.profile")"
+has "the line explains itself" "MCP tool results" "$(cat "$prof/.profile")"
+
+# Idempotent: a second retrofit must not append a duplicate.
+run_quiet "$prof"
+eq "does not duplicate the export on a second run" "1" \
+  "$(grep -c '^export TOKENSAVE_UPDATE_CHECK=0$' "$prof/.profile")"
+
+# A deliberately different value is the operator's call — left alone, not
+# duplicated (the marker is the assignment, not the value).
+prof2="${tsdir}/profilekept"; mkdir -p "$prof2"
+printf 'export TOKENSAVE_UPDATE_CHECK=off\n' >"$prof2/.profile"
+run_quiet "$prof2"
+eq "leaves an existing setting alone" "export TOKENSAVE_UPDATE_CHECK=off" \
+  "$(cat "$prof2/.profile")"
+
+# An existing .profile with no trailing newline must not have its last line
+# joined to ours — same append bug guarded for in the .gitignore step.
+prof3="${tsdir}/profilenonl"; mkdir -p "$prof3"
+printf 'umask 022' >"$prof3/.profile"       # deliberately unterminated
+run_quiet "$prof3"
+eq "preserves an unterminated last line" "umask 022" \
+  "$(head -1 "$prof3/.profile")"
+eq "still adds the export below it" "1" \
+  "$(grep -c '^export TOKENSAVE_UPDATE_CHECK=0$' "$prof3/.profile")"
+
+# Last knob in the file, so it is not restored afterwards. Disabling the sync
+# drops the graph work only — the quiet flag is not a sync knob, and a session
+# with sync off still must not get update notices inside its tool results.
 export FCLAUDE_TOKENSAVE_SYNC=0
-eq "sync emits nothing when disabled" "" "$(_tokensave_prepare_cmd)"
+disabled_out="$(_tokensave_prepare_cmd)"
+eq "sync emits no graph work when disabled" "export TOKENSAVE_UPDATE_CHECK=0;" "$disabled_out"
+hasnt "no sync when disabled" "tokensave sync" "$disabled_out"
 
 # --- summary --------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

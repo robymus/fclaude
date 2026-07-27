@@ -4,8 +4,10 @@
 # site.yml only runs at first boot, so an existing VM needs this one-shot to:
 #   1. replace any npm-global Claude Code with the native installer (per-user,
 #      hot-update-safe) and pin the latest auto-update channel;
-#   2. install the weekly, network-gated apt-upgrade script + systemd timer;
-#   3. seed the staleness-warning clock.
+#   2. install the weekly, network-gated apt-upgrade script + systemd timer,
+#      and the Headroom/tokensave maintenance script it chains into;
+#   3. seed the staleness-warning clock;
+#   4. silence the tokensave update notice.
 #
 # Run from a repo checkout as your normal user (it drives the VM over ssh; the
 # VM's fclaude account has NOPASSWD sudo for the root-owned bits):
@@ -35,7 +37,8 @@ FORCE_NOW=0
 load_config
 
 UPDATE_DIR="${REPO_DIR}/vm/update"
-for f in fclaude-apt-upgrade.sh fclaude-apt-upgrade.service fclaude-apt-upgrade.timer; do
+for f in fclaude-apt-upgrade.sh fclaude-apt-upgrade.service fclaude-apt-upgrade.timer \
+         fclaude-headroom-update.sh; do
   [[ -r "${UPDATE_DIR}/${f}" ]] || die "missing ${UPDATE_DIR}/${f} — run from a repo checkout"
 done
 
@@ -74,6 +77,26 @@ ssh_vm 'sudo install -m0755 /tmp/fclaude-apt-upgrade.sh /usr/local/sbin/fclaude-
   && sudo install -m0644 /tmp/fclaude-apt-upgrade.service /etc/systemd/system/fclaude-apt-upgrade.service \
   && sudo install -m0644 /tmp/fclaude-apt-upgrade.timer /etc/systemd/system/fclaude-apt-upgrade.timer \
   && rm -f /tmp/fclaude-apt-upgrade.sh /tmp/fclaude-apt-upgrade.service /tmp/fclaude-apt-upgrade.timer'
+
+# The apt script chains into this one (Headroom staging + `tokensave upgrade`),
+# and until now it reached the VM ONLY through first-boot provisioning — so an
+# already-provisioned VM kept running whatever version it was built with, and
+# `fclaude --update` silently did none of the Headroom/tokensave work it looked
+# like it was doing. Pushed here, with the apt assets it belongs to.
+info "pushing the Headroom/tokensave maintenance script"
+scp_vm "${UPDATE_DIR}/fclaude-headroom-update.sh" "${SSH_USER}@${VM_IP}:/tmp/"
+ssh_vm 'sudo install -m0755 /tmp/fclaude-headroom-update.sh /usr/local/sbin/fclaude-headroom-update.sh \
+  && rm -f /tmp/fclaude-headroom-update.sh'
+
+# tokensave's MCP server prepends "⚠️ … vY is available…" as an extra content
+# block to EVERY tool result (mcp/server.rs check_version_update) — in the
+# payload, not on stderr — so a minor release upstream corrupts every tokensave
+# tool result. TOKENSAVE_UPDATE_CHECK=0 kills that passive notice while leaving
+# explicit `tokensave upgrade` / `doctor` untouched. site.yml writes it at
+# provision time; this retrofits a VM built before that. See the snippet's own
+# comment in lib/common.sh for why ~/.profile and not the MCP registration.
+info "silencing the tokensave update notice (it corrupts MCP tool results)"
+ssh_vm "$(_tokensave_quiet_profile_cmd)"
 
 info "writing /etc/default/fclaude-update from host config"
 tmpenv="$(mktemp)"

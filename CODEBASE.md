@@ -42,7 +42,7 @@ Host firewall (nftables table 'fclaude') blocks VM→host privileged ports (<102
 | `fclaude-vscode` | VS Code `claudeCode.claudeProcessWrapper`. Drops `argv[1]` (the extension's bundled claude path — byte-identical to the VM's native claude) and forwards the rest. **Skips the mount for workspace-agnostic helper invocations** (`fc_is_mcp_helper`: first arg `mcp`, or any `--claude-in-chrome-mcp`) — those run in the VM home with no mount/cd/EXIT-trap, because the extension runs *every* claude process through this wrapper and the chrome-MCP singleton would otherwise pin (leak) the first workspace's mount for the life of the editor; discriminator is **fail-open** (unrecognized → mount). For a real session: mounts CWD, then `cd`s into the **host absolute path** (resolvable in the VM via the `/home/<hostuser>` bind mount) so claude reports host-matching paths back to the editor. stdio (`ssh -T`), **no** skip-permissions flag (extension sets that). **Errors out** if CWD isn't under `$HOME`. |
 | `fclaude-grow-disk` | `qemu-img resize` → `virsh blockresize` → in-VM `growpart`+`resize2fs` (online ext4 grow). |
 | `fclaude-metrics-setup` | **Standalone** host-run installer for the Grafana Cloud metrics agent: `sops -d --extract`s the remote_write url/user/token from `secrets/secrets.sops.yaml`, renders `prometheus.yml`, and delivers them (token → `/etc/fclaude/gc_token` 600 fclaude, config → `/etc/fclaude/prometheus.yml`) into the VM, then (re)starts `fclaude-metrics.service`. The age key never leaves the host. `install.sh` invokes it as step 14; also retrofits a pre-existing VM. |
-| `fclaude-update-setup` | **Standalone** retrofit for auto-update on an already-provisioned VM (installed to `~/.local/bin`). Removes any npm-global Claude, installs/keeps the **native** Claude (as fclaude, no sudo — keeps `~/.local` user-owned), merges `autoUpdatesChannel: latest` into `settings.json` (jq, clobber-safe), pushes `vm/update/*` to `/usr/local/sbin` + `/etc/systemd/system`, writes `/etc/default/fclaude-update` from host knobs, seeds `last-apt-success`, and enables the weekly timer (or disables it when `FCLAUDE_UPDATE_APT=0`). `--now` forces one immediate gate-bypassed apt run. Idempotent; run from a repo checkout. |
+| `fclaude-update-setup` | **Standalone** retrofit for auto-update on an already-provisioned VM (installed to `~/.local/bin`). Removes any npm-global Claude, installs/keeps the **native** Claude (as fclaude, no sudo — keeps `~/.local` user-owned), merges `autoUpdatesChannel: latest` into `settings.json` (jq, clobber-safe), pushes `vm/update/*` — the apt script/units **and `fclaude-headroom-update.sh`** — to `/usr/local/sbin` + `/etc/systemd/system`, writes `/etc/default/fclaude-update` from host knobs, seeds `last-apt-success`, appends `export TOKENSAVE_UPDATE_CHECK=0` to the VM's `~/.profile` if absent, and enables the weekly timer (or disables it when `FCLAUDE_UPDATE_APT=0`). `--now` forces one immediate gate-bypassed apt run. Idempotent; run from a repo checkout. **This is the only path that refreshes the VM's copy of `vm/update/*`** — site.yml runs at first boot only, so after changing anything under `vm/update/` (or pulling such a change) run this, or the VM keeps executing the version it was built with. |
 
 ### `host/` config templates (rendered + installed by install.sh)
 | File | Installed to | Role |
@@ -101,6 +101,7 @@ only after that address exists.
 | `fclaude-apt-upgrade.sh` | `/usr/local/sbin/` | Runs as root. **Network-speed gate** first: a size+time-capped `curl` probe (`FCLAUDE_UPDATE_PROBE_URL`, default Cloudflare `__down`) measures the VM's downlink (= host uplink via NAT); if below `FCLAUDE_UPDATE_MIN_MBIT` (default 100) — or offline — it stamps `skipped(slow:N)` and exits 0 (a skip is success). `FCLAUDE_UPDATE_FORCE=1` bypasses the gate (set by `fclaude --update`). Then dpkg-lock wait → `apt-get update` + `upgrade --force-confold` (not dist-upgrade) + `autoremove`. Writes two stamps under `/var/lib/fclaude/`: `last-apt-upgrade` (every attempt: `ok`/`error`/`skipped(...)`) and `last-apt-success` (**ISO content**, advanced only on a real upgrade — drives the staleness warning). Config from `/etc/default/fclaude-update`; every value has a built-in default. |
 | `fclaude-apt-upgrade.service` | `/etc/systemd/system/` | Oneshot; `EnvironmentFile=-/etc/default/fclaude-update`; `Nice=10`, idle IO; after `network-online`+`docker`. |
 | `fclaude-apt-upgrade.timer` | `/etc/systemd/system/` | `OnCalendar=Sun 04:00`, `RandomizedDelaySec=1h`, `Persistent=true` (catches up on next boot if the VM was off). |
+| `fclaude-headroom-update.sh` | `/usr/local/sbin/` | Runs as root, chained (best-effort) from the tail of `fclaude-apt-upgrade.sh`, so it only fetches on a link the gate already approved. **Stages** the latest `headroom-ai[proxy]` into `/opt/headroom/versions/<ver>` without touching the running proxy (activation is `fclaude-headroom-activate`'s job), and **upgrades tokensave** (`tokensave upgrade` as the `fclaude` user, then `tokensave reinstall` on a version bump) — both skipped while `pgrep -x claude` finds a live session. Logs to `/var/log/fclaude-headroom-update.log`. |
 
 ### `test/`
 | File | Role |
@@ -198,7 +199,28 @@ only after that address exists.
   release that adds MCP tools leaves them unpermitted until the agent integration is refreshed
   (7.0.2 → 7.7.0 added 81, and Claude Code warns on every call until then). `reinstall` is run from
   `$HOME` and without `--local`, so it only ever touches the VM's USER-scope config — never a mounted
-  repo. (`vm/update/fclaude-headroom-update.sh`)
+  repo. Install and upgrade are two different mechanisms with different trust models: headroom's
+  `ensure_tokensave()` fetches the GitHub **release tarball** and verifies it against a **pinned
+  SHA-256** (never `cargo install` — a multi-minute compile in the launch path), while `tokensave
+  upgrade` is the vendor's own self-updater and pins nothing beyond the release channel.
+  (`vm/update/fclaude-headroom-update.sh`)
+- **`vm/update/*` only reaches an existing VM through `fclaude-update-setup`** — site.yml runs at
+  first boot, so editing a script under `vm/update/` changes nothing on a VM that is already
+  provisioned. That is exactly how the tokensave upgrade above silently did not happen: the script
+  landed in the repo, the VM kept the copy it was built with, and `fclaude --update` (which chains
+  apt → `fclaude-headroom-update.sh`) dutifully ran the old one. `fclaude-update-setup` now pushes
+  that script alongside the apt assets; **run it after any `vm/update/` change**.
+- **tokensave's update notice is silenced (`TOKENSAVE_UPDATE_CHECK=0`)** — this is not noise
+  suppression. Its MCP server PREPENDS "⚠️ tokensave vX is installed, but vY is available…" as an
+  extra content block to **every tool result** (`mcp/server.rs check_version_update`) — in the
+  payload, not on stderr — so one minor release upstream corrupts every tokensave tool result until
+  the binary is upgraded. The flag disables only the *passive* notice (`init`/`sync`/`status` + the
+  MCP server); explicit `tokensave upgrade` and `doctor` ignore it, so weekly upgrades still work.
+  Set in **two** places, deliberately: the wrappers export it on the session line
+  (`_tokensave_prepare_cmd`), which covers every VM regardless of vintage and cannot be undone by
+  `tokensave reinstall` (which rewrites the MCP registration, so a per-server `env` would be lost);
+  and the VM's `~/.profile` (site.yml, retrofit by `fclaude-update-setup`) covers sessions the
+  wrappers did not launch. claude's MCP servers and tokensave's own hooks inherit it either way.
 - **`HEADROOM_TOOL_SEARCH=off` — the two tool-deferral layers must not stack** — Claude Code already
   defers its own tool schemas and resolves them **client-side** through its own `ToolSearch` tool;
   `headroom wrap` keeps that on by setting `ENABLE_TOOL_SEARCH=true` (needed because Claude Code
