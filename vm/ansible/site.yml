@@ -384,6 +384,36 @@
       changed_when: false
       when: (fclaude_headroom_enable | default('1')) | string == '1'
 
+    # tokensave's MCP server PREPENDS "⚠️ tokensave vX is installed, but vY is
+    # available. Run `tokensave upgrade` to update." as an extra content block to
+    # EVERY tool result (mcp/server.rs check_version_update) — inside the
+    # payload, not on stderr — so one minor release upstream corrupts every
+    # tokensave tool result until the binary is upgraded. TOKENSAVE_UPDATE_CHECK
+    # turns off exactly that passive notice (init/sync/status + the MCP server);
+    # explicit `tokensave upgrade` and `doctor` ignore it, so the weekly upgrade
+    # in fclaude-headroom-update.sh keeps working.
+    #
+    # ~/.profile, not the MCP server's `env`: `tokensave reinstall` (run after
+    # every upgrade) rewrites that registration and would drop it, whereas the
+    # profile is read by every login shell in the VM — and claude's MCP servers
+    # and tokensave's own hooks all inherit the environment from there. The
+    # wrappers export the same flag on the session line (lib/common.sh
+    # _tokensave_prepare_cmd), which is what covers VMs provisioned before this;
+    # this task covers sessions the wrappers did not launch.
+    # lineinfile, not a shell append: idempotent and it never clobbers the rest.
+    - name: Silence the tokensave update notice (it corrupts MCP tool results)
+      become: true
+      become_user: "{{ fclaude_user }}"
+      ansible.builtin.lineinfile:
+        path: "/home/{{ fclaude_user }}/.profile"
+        line: "{{ item }}"
+        create: true
+        mode: '0644'
+      loop:
+        - "# tokensave: its update notice is injected into MCP tool results, not stderr"
+        - "export TOKENSAVE_UPDATE_CHECK=0"
+      when: (fclaude_headroom_enable | default('1')) | string == '1'
+
     # --- Metrics agent (prometheus --agent) — config + token delivered host-side ---
     # by fclaude-metrics-setup (install.sh step 14). The unit is gated on those
     # files existing, so it stays inactive until the secret lands.
