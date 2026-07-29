@@ -1,0 +1,63 @@
+---
+# Host-run playbook: installs the llm.log proxy integration into the fclaude VM.
+#
+# Unlike site.yml (which runs IN the VM via cloud-init, -c local), THIS one runs
+# from the HOST with the VM as an ssh remote — so ansible.builtin.copy reads the
+# CA certs from the host's ~/.llm.log and pushes them into the guest. install.sh
+# runs it after provisioning, only when the host actually has llm.log certs.
+#
+# Invoked roughly as:
+#   ansible-playbook -i "<vm_ip>," -u fclaude --private-key <key> \
+#     -e llmlog_host_dir=... -e llmlog_vm_dir=... -e llmlog_port=... -e env_home=... \
+#     vm/ansible/llmlog.yml
+- name: Install llm.log proxy integration into the fclaude VM
+  hosts: all
+  become: true
+  gather_facts: false
+  vars:
+    # Sensible defaults; install.sh overrides all of these with -e.
+    llmlog_host_dir: "{{ lookup('env', 'HOME') }}/.llm.log"
+    llmlog_vm_dir: /home/fclaude/.llm.log
+    llmlog_port: "9922"
+    # Gateway address the guest uses to reach the host's llm.log bridge
+    # (fclaude-llmlog.socket forwards gateway:port -> host 127.0.0.1:port).
+    llmlog_gateway: "192.168.122.1"
+    env_home: "{{ lookup('env', 'HOME') }}"
+
+  tasks:
+    - name: Ensure the llm.log cert directory exists in the VM
+      ansible.builtin.file:
+        path: "{{ llmlog_vm_dir }}"
+        state: directory
+        owner: fclaude
+        group: fclaude
+        mode: "0755"
+
+    - name: Copy llm.log CA certs from the host into the VM (public certs only)
+      ansible.builtin.copy:
+        src: "{{ llmlog_host_dir }}/{{ item }}"
+        dest: "{{ llmlog_vm_dir }}/{{ item }}"
+        owner: fclaude
+        group: fclaude
+        mode: "0644"
+      loop:
+        - ca.pem
+        - ca-bundle.pem
+
+    # /etc/environment is read by pam_env, so these reach the wrapper-launched
+    # claude (a non-interactive ssh exec, which does NOT source profile/bashrc).
+    # Cert paths use the host-home path, which the VM bind-mounts onto
+    # /home/fclaude, so they match host paths. The proxy points at the gateway
+    # bridge (not 127.0.0.1) so every session reaches llm.log over the NAT
+    # without a per-session ssh -R tunnel.
+    - name: Set llm.log proxy + CA env vars in /etc/environment
+      ansible.builtin.blockinfile:
+        path: /etc/environment
+        marker: "# {mark} fclaude llm.log"
+        block: |
+          NODE_EXTRA_CA_CERTS={{ env_home }}/.llm.log/ca.pem
+          SSL_CERT_FILE={{ env_home }}/.llm.log/ca-bundle.pem
+          REQUESTS_CA_BUNDLE={{ env_home }}/.llm.log/ca-bundle.pem
+          CURL_CA_BUNDLE={{ env_home }}/.llm.log/ca-bundle.pem
+          HTTPS_PROXY=http://{{ llmlog_gateway }}:{{ llmlog_port }}
+          https_proxy=http://{{ llmlog_gateway }}:{{ llmlog_port }}

@@ -75,33 +75,13 @@ FCLAUDE_UPDATE_PROBE_URL="https://speed.cloudflare.com/__down?bytes=10000000"  #
 FCLAUDE_UPDATE_PROBE_MAXTIME="5"  # seconds; also time-caps the probe so slow links transfer little
 FCLAUDE_UPDATE_WARN_DAYS="15"     # `fclaude` warns at startup if the last SUCCESSFUL update is older
 
-# --- Headroom context-compression proxy (in-VM) ---
-# Headroom (headroom-ai) runs as a shared proxy inside the VM; the fclaude
-# wrappers point Claude at it with ANTHROPIC_BASE_URL so its API traffic is
-# compressed and measured. They deliberately do NOT use `headroom wrap`, which
-# writes proxy settings into the workspace's .claude/settings.local.json — i.e.
-# into the mounted HOST repo, breaking any claude run outside the VM. See
-# lib/common.sh `_headroom_launch`. FCLAUDE_HEADROOM_ENABLE=0 → plain `claude`.
-FCLAUDE_HEADROOM_ENABLE="1"
-FCLAUDE_HEADROOM_PORT="8787"      # the shared proxy service's loopback port
-# 1M context window: routing Claude through a custom base URL disables the 1M
-# beta (headroom #1158) unless the model id carries the `[1m]` suffix — Claude
-# Code turns that suffix into the `context-1m` beta header. The wrapper appends
-# it and passes the result as ANTHROPIC_MODEL, which overrides settings.json, so
-# we must name the model. Empty = don't set it (respect settings.json, no 1M).
-FCLAUDE_HEADROOM_MODEL="claude-opus-5"
-# tokensave code-graph refresh before each session (`headroom wrap` used to do
-# this; the wrappers now run it themselves). 0 = skip. The timeout caps a cold
-# index of a huge repo — tokensave also re-checks staleness on demand, so an
-# expired sync is never fatal.
-FCLAUDE_TOKENSAVE_SYNC="1"
-FCLAUDE_TOKENSAVE_TIMEOUT="60"
-
-# --- Grafana Cloud metrics export (in-VM prometheus agent) ---
-# An in-VM `prometheus --agent` scrapes Headroom's /metrics every 5m and
-# remote_writes to Grafana Cloud. Credentials come from the SOPS secret
-# (secrets/secrets.sops.yaml); these labels are non-secret. Set ENABLE=0 to skip.
-FCLAUDE_METRICS_ENABLE="1"
-FCLAUDE_METRICS_HOST_LABEL="darkness"
-FCLAUDE_METRICS_VM_LABEL="fclaude"
-FCLAUDE_PROMETHEUS_VERSION="3.13.1"  # pinned prometheus (agent mode) installed in the VM
+# --- llm.log proxy integration (optional) ---
+# llm.log runs on the host, listening on host loopback only (hard-coded). When
+# its CA certs exist at $FCLAUDE_LLMLOG_HOST_DIR, install.sh copies them into the
+# VM, installs a gateway bridge (fclaude-llmlog.socket: HOST_IP:port -> host
+# 127.0.0.1:port), and points the VM's HTTPS_PROXY at HOST_IP:port — so every
+# session reaches llm.log over the NAT without a per-session ssh -R tunnel.
+# Set FCLAUDE_LLMLOG_PORT="" to disable the integration entirely.
+FCLAUDE_LLMLOG_PORT="9922"
+FCLAUDE_LLMLOG_HOST_DIR="${HOME}/.llm.log"
+FCLAUDE_LLMLOG_VM_DIR="${FCLAUDE_VM_HOME}/.llm.log"

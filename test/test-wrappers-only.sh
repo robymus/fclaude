@@ -46,7 +46,7 @@ ok "never invokes a privileged/slow tool" \
   "$([[ "$run_out" != *FORBIDDEN* ]] && echo yes || echo no)"
 
 # --- the files it must install --------------------------------------------
-for w in fclaude fclaude-vscode fclaude-grow-disk fclaude-update-setup fclaude-metrics-setup; do
+for w in fclaude fclaude-vscode fclaude-grow-disk fclaude-update-setup; do
   ok "installs $w executable" \
     "$([[ -x "${FAKE}/.local/bin/${w}" ]] && echo yes || echo no)"
   ok "installed $w matches the repo copy" \
@@ -72,12 +72,12 @@ ok "warns when there is no config yet" \
 # With a config that predates a knob, the missing key is named with its default
 # so it can be pasted straight in — and a knob that IS present stays quiet.
 mkdir -p "${FAKE}/.fclaude"
-printf 'FCLAUDE_HEADROOM_ENABLE="1"\n' >"${FAKE}/.fclaude/config"
+printf 'FCLAUDE_UPDATE_APT="1"\n' >"${FAKE}/.fclaude/config"
 drift_out="$(HOME="$FAKE" PATH="${shimdir}:$PATH" bash "${REPO_DIR}/install.sh" --wrappers-only 2>&1)"
 ok "names a knob the config predates" \
-  "$([[ "$drift_out" == *"FCLAUDE_TOKENSAVE_SYNC="* ]] && echo yes || echo no)"
+  "$([[ "$drift_out" == *"FCLAUDE_UPDATE_WARN_DAYS="* ]] && echo yes || echo no)"
 ok "does not re-list a knob the config already has" \
-  "$([[ "$drift_out" != *"FCLAUDE_HEADROOM_ENABLE="* ]] && echo yes || echo no)"
+  "$([[ "$drift_out" != *"FCLAUDE_UPDATE_APT="* ]] && echo yes || echo no)"
 ok "no longer warns about a missing config" \
   "$([[ "$drift_out" != *"no config at"* ]] && echo yes || echo no)"
 

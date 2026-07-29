@@ -47,26 +47,10 @@ FCLAUDE_UPDATE_PROBE_URL="__FCLAUDE_UPDATE_PROBE_URL__"
 FCLAUDE_UPDATE_PROBE_MAXTIME="__FCLAUDE_UPDATE_PROBE_MAXTIME__"
 FCLAUDE_UPDATE_WARN_DAYS="__FCLAUDE_UPDATE_WARN_DAYS__"
 
-# --- Headroom proxy (in-VM) ---
-# Claude is pointed at the in-VM Headroom compression proxy with
-# ANTHROPIC_BASE_URL. NOT via `headroom wrap`: that writes proxy settings into
-# the workspace's .claude/settings.local.json, i.e. into the mounted HOST repo,
-# which breaks any claude you run outside the VM in the same checkout.
-# 0 = run plain claude (bypass Headroom).
-FCLAUDE_HEADROOM_ENABLE="__FCLAUDE_HEADROOM_ENABLE__"
-FCLAUDE_HEADROOM_PORT="__FCLAUDE_HEADROOM_PORT__"
-# Model to run with the 1M context window through Headroom (the wrapper passes
-# ANTHROPIC_MODEL=<this>[1m]; the suffix is what makes Claude Code send the
-# context-1m beta header, and the env overrides settings.json). Empty = unset.
-FCLAUDE_HEADROOM_MODEL="__FCLAUDE_HEADROOM_MODEL__"
-# Refresh the tokensave code graph before each session; timeout caps a cold index.
-FCLAUDE_TOKENSAVE_SYNC="__FCLAUDE_TOKENSAVE_SYNC__"
-FCLAUDE_TOKENSAVE_TIMEOUT="__FCLAUDE_TOKENSAVE_TIMEOUT__"
-
-# --- Grafana Cloud metrics (in-VM prometheus agent) ---
-# The agent scrapes Headroom /metrics every 5m and remote_writes to Grafana
-# Cloud (creds from the SOPS secret). Labels are non-secret. 0 disables.
-# Re-apply the secret/config to the VM with: ./host/bin/fclaude-metrics-setup
-FCLAUDE_METRICS_ENABLE="__FCLAUDE_METRICS_ENABLE__"
-FCLAUDE_METRICS_HOST_LABEL="__FCLAUDE_METRICS_HOST_LABEL__"
-FCLAUDE_METRICS_VM_LABEL="__FCLAUDE_METRICS_VM_LABEL__"
+# --- llm.log proxy (optional) ---
+# Port of the host's llm.log proxy. When set, install.sh installs a gateway
+# bridge (fclaude-llmlog.socket: HOST_IP:<port> -> host 127.0.0.1:<port>) and
+# points the VM's HTTPS_PROXY at HOST_IP:<port>, so every session reaches
+# llm.log over the NAT (no per-session ssh -R). Empty disables the integration.
+# Re-apply the host bridge alone with: sudo ./host/bin/fclaude-llmlog-setup
+LLMLOG_PROXY_PORT="__FCLAUDE_LLMLOG_PORT__"

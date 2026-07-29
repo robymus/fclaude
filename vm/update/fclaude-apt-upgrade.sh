@@ -69,11 +69,5 @@ else
   printf 'error %s\n' "$(date -Is)" > "$STAMP"   # leave $OKSTAMP alone so staleness still trips
 fi
 
-# Piggyback the weekly, fast-network moment to STAGE a Headroom update (does not
-# touch the running proxy; activated later at boot / next idle session).
-if [ -x /usr/local/sbin/fclaude-headroom-update.sh ]; then
-  /usr/local/sbin/fclaude-headroom-update.sh || true
-fi
-
 echo "=== done rc=$rc ==="
 exit "$rc"

@@ -1,0 +1,20 @@
+[Unit]
+Description=fclaude llm.log proxy bridge socket (VM gateway -> host loopback)
+# The gateway address (__FCLAUDE_HOST_IP__) is owned by the libvirt network and
+# only exists once that network's bridge is up. FreeBind lets us bind regardless
+# of ordering, but we still order after the libvirt network for cleanliness.
+#
+# Do NOT order against network-online.target: it is the wrong dependency (host
+# uplink, not the libvirt bridge) and its Wants= here formed the boot-time
+# ordering cycle whose collateral job-deletion stopped nfs-server from starting.
+After=virtnetworkd.service libvirtd.service
+
+[Socket]
+# Listen on the NAT gateway address ONLY (never 0.0.0.0): reachable from the VM
+# subnet but not the host LAN. The VM points HTTPS_PROXY at this address, so all
+# sessions share one host-side bridge instead of per-session ssh -R tunnels.
+ListenStream=__FCLAUDE_HOST_IP__:__FCLAUDE_LLMLOG_PORT__
+FreeBind=true
+
+[Install]
+WantedBy=sockets.target
