@@ -1,13 +1,24 @@
 [Unit]
 Description=fclaude llm.log proxy bridge socket (VM gateway -> host loopback)
 # The gateway address (__FCLAUDE_HOST_IP__) is owned by the libvirt network and
-# only exists once that network's bridge is up. FreeBind lets us bind regardless
-# of ordering, but we still order after the libvirt network for cleanliness.
+# only exists once that network's bridge is up. FreeBind=true is what makes that
+# safe: it lets us bind the address before it exists, so no ordering against
+# libvirt is needed — or possible.
 #
-# Do NOT order against network-online.target: it is the wrong dependency (host
-# uplink, not the libvirt bridge) and its Wants= here formed the boot-time
-# ordering cycle whose collateral job-deletion stopped nfs-server from starting.
-After=virtnetworkd.service libvirtd.service
+# Do NOT add After=/Wants= against ANY service unit here (libvirtd.service,
+# virtnetworkd.service, network-online.target, ...). A socket unit is
+# Before=sockets.target by default, and every service is After=basic.target,
+# which is itself After=sockets.target. Ordering this socket after a service
+# therefore closes a cycle:
+#
+#   sockets.target -> fclaude-llmlog.socket -> libvirtd.service
+#                  -> basic.target -> sockets.target
+#
+# systemd breaks such a cycle by deleting one job in it, picked essentially at
+# random per boot. The victim has been nfs-server.service (an earlier revision
+# of this file ordered against network-online.target) and, later, this socket's
+# own start job — leaving the unit "enabled" but dead, with the VM unable to
+# reach llm.log until the socket was started by hand.
 
 [Socket]
 # Listen on the NAT gateway address ONLY (never 0.0.0.0): reachable from the VM
