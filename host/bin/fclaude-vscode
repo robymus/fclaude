@@ -67,10 +67,15 @@ if abs="$(cd "$DIR" 2>/dev/null && pwd -P)" && (relpath_under_home "$abs") >/dev
   # bind mount of /home/fclaude, so the host cwd resolves to the mounted
   # workspace AND getcwd reports it under /home/<hostuser> (a symlink would be
   # canonicalized back to /home/fclaude) — claude returns host-matching paths.
+  # A failing `cd` means the share vanished after mount_workspace verified it;
+  # name fclaude as the culprit rather than leaking a bare shell "No such file".
+  hint="fclaude: workspace not mounted in the VM ($abs) — run: fclaude --cleanup $(relpath_under_home "$abs")"
   ssh -T \
     -i "$SSH_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
     -o LogLevel=ERROR "${SSH_USER}@${VM_IP}" \
-    "${CLAUDE_LOGIN_ENV} cd $(printf '%q' "$abs") && exec claude ${extra}"
+    "${CLAUDE_LOGIN_ENV} cd $(printf '%q' "$abs") 2>/dev/null || { \
+        echo $(printf '%q' "$hint") >&2; exit 1; }; \
+      exec claude ${extra}"
 else
   die "workspace ${DIR} is not under ${SHARE_ROOT}; refusing to run (open a folder under your \$HOME)"
 fi

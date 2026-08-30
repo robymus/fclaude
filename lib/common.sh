@@ -124,15 +124,35 @@ ssh_maint() {
 vm_state() { virsh domstate "$VM_NAME" 2>/dev/null || echo "undefined"; }
 
 # Start the VM if it isn't running and wait until ssh answers.
+# Drop every workspace refcount. Only valid right after a cold VM boot: the
+# mounts they count live *inside* the VM, so a VM that has just come up from
+# "shut off" holds none of them. Whatever is still on disk belongs to a session
+# that never got to unmount — a host reboot, a killed terminal, a desktop-session
+# logout — and would otherwise make the next session skip its mount.
+# NOT valid for a resume from `paused`, where the mounts survive.
+reset_refcounts_cold_boot() {
+  local f n=0
+  for f in "$REFCOUNT_DIR"/*.count; do
+    [[ -e "$f" ]] || continue
+    rm -f "$f" "${f%.count}.rel"
+    n=$((n + 1))
+  done
+  if ((n > 0)); then
+    info "VM started from cold — cleared ${n} workspace refcount(s) left by earlier sessions"
+  fi
+}
+
 ensure_vm_running() {
-  local state
+  local state cold=0
   state="$(vm_state)"
   case "$state" in
     running) ;;
-    "shut off"|crashed) info "starting VM $VM_NAME..."; virsh start "$VM_NAME" >/dev/null ;;
+    "shut off"|crashed) info "starting VM $VM_NAME..."; virsh start "$VM_NAME" >/dev/null; cold=1 ;;
     paused)  info "resuming VM $VM_NAME...";  virsh resume "$VM_NAME" >/dev/null ;;
     undefined) die "VM $VM_NAME is not defined — run install.sh first" ;;
-    *) info "VM state '$state', attempting start..."; virsh start "$VM_NAME" >/dev/null 2>&1 || true ;;
+    # Unknown state: the VM is not usable as-is, so whatever comes back is a
+    # fresh boot as far as the mounts are concerned.
+    *) info "VM state '$state', attempting start..."; virsh start "$VM_NAME" >/dev/null 2>&1 || true; cold=1 ;;
   esac
 
   local timeout="${FCLAUDE_SSH_TIMEOUT:-90}"
@@ -142,6 +162,10 @@ ensure_vm_running() {
     waited=$((waited + 2))
     ((waited < timeout)) || die "VM did not become reachable over ssh within ${timeout}s"
   done
+
+  if ((cold)); then
+    reset_refcounts_cold_boot
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -208,6 +232,23 @@ fclaude_status() {
     found=1
   done < <(findmnt -rno TARGET 2>/dev/null | grep "^${EXPORTS_ROOT%/}/" || true)
   ((found)) || printf '  (none)\n'
+
+  # Counters with no share behind them: a session that was killed before its
+  # EXIT trap. The next session on that workspace re-seats them automatically,
+  # so this is informational — but it explains a workspace that "looks busy".
+  local orphan=0 f k krel
+  for f in "$REFCOUNT_DIR"/*.count; do
+    [[ -e "$f" ]] || continue
+    k="$(basename "$f" .count)"
+    krel="$(cat "$(_rel_file "$k")" 2>/dev/null || true)"
+    [[ -n "$krel" ]] || krel="(unknown workspace, key $k)"
+    if mountpoint -q "${EXPORTS_ROOT%/}/${krel}" 2>/dev/null; then continue; fi
+    if ((orphan == 0)); then
+      printf '\nStale refcounts (nothing shared; reset on the next session there):\n'
+      orphan=1
+    fi
+    printf '  %-44s refs=%s\n' "$krel" "$(refcount_get "$k")"
+  done
 }
 
 # ---------------------------------------------------------------------------
@@ -324,6 +365,9 @@ with_lock() {
 }
 
 _count_file() { printf '%s/%s.count' "$REFCOUNT_DIR" "$1"; }
+# Sidecar recording which workspace a (hashed) key belongs to, so `--status`
+# can name a counter that has no live share behind it. Purely diagnostic.
+_rel_file()   { printf '%s/%s.rel'   "$REFCOUNT_DIR" "$1"; }
 
 refcount_get() {
   local f; f="$(_count_file "$1")"
@@ -337,6 +381,18 @@ refcount_inc() {
   n=$(( $(refcount_get "$key") + 1 ))
   printf '%s' "$n" >"$f"
   echo "$n"
+}
+
+# Overwrite the counter for <key>. Caller must hold the lock for <key>.
+# Used to re-seat a counter that outlived the share it was counting.
+refcount_set() {
+  local key="$1" n="$2" f
+  f="$(_count_file "$key")"
+  if ((n <= 0)); then
+    rm -f "$f"
+  else
+    printf '%s' "$n" >"$f"
+  fi
 }
 
 # Decrement (floor 0) and echo the new value. Caller must hold the lock.
@@ -375,23 +431,49 @@ relpath_under_home() {
 # Workspace mount/unmount (reference counted) — plan §9
 # ---------------------------------------------------------------------------
 # Internal: do the actual mount work; assumes lock held and rel computed.
+#
+# Idempotent and self-healing: every layer of the share (host bind mount, export,
+# VM-side NFS mount) is re-established if it is missing, whatever the counter
+# says. The counter alone is NOT evidence that the share exists — a wrapper
+# killed before its EXIT trap (SIGKILLed terminal, desktop-session logout, host
+# reboot) leaves it above zero with nothing behind it. The old "count != 1 →
+# nothing to do" shortcut then silently skipped the mount and dropped the
+# session into a directory that does not exist in the VM, whose only symptom was
+# a bare `cd: /home/fclaude/<ws>: No such file or directory` from the guest.
 _do_mount() {
   local rel="$1" key="$2"
-  local n; n="$(refcount_inc "$key")"
-  if [[ "$n" == "1" ]]; then
-    local host_src="${SHARE_ROOT%/}/${rel}"
-    local export_dir="${EXPORTS_ROOT%/}/${rel}"
+  local host_src="${SHARE_ROOT%/}/${rel}"
+  local export_dir="${EXPORTS_ROOT%/}/${rel}"
+  local vm_dir="${VM_MOUNT_BASE%/}/${rel}"
+
+  if mountpoint -q "$export_dir"; then
+    # Live share: join it.
+    refcount_inc "$key" >/dev/null
+  else
+    # Nothing is shared, so any non-zero counter is a leak from a session that
+    # never got to unmount. Re-seat it on us instead of counting on top of it.
+    local stale; stale="$(refcount_get "$key")"
+    if [[ "$stale" != "0" ]]; then
+      warn "stale refcount for /${rel} (${stale}, but nothing is shared) — a previous session was killed before it could unmount; resetting to 1"
+    fi
+    refcount_set "$key" 1
     info "sharing $host_src"
     mkdir -p "$export_dir"
-    if ! mountpoint -q "$export_dir"; then
-      sudo mount --bind "$host_src" "$export_dir"
-    fi
+    sudo mount --bind "$host_src" "$export_dir" \
+      || { _do_unmount "$rel" "$key" >/dev/null 2>&1 || true
+           die "could not bind-mount $host_src into the export root $EXPORTS_ROOT"; }
     sudo exportfs -r
-    ssh_vm "sudo mkdir -p ${VM_MOUNT_BASE%/}/${rel} && \
-            ( mountpoint -q ${VM_MOUNT_BASE%/}/${rel} || \
-              sudo mount -t nfs4 -o vers=4,sec=sys ${HOST_IP}:/${rel} ${VM_MOUNT_BASE%/}/${rel} )" \
-      || { _do_unmount "$rel" "$key" >/dev/null 2>&1 || true; die "NFS mount in VM failed for /${rel}"; }
   fi
+  printf '%s' "$rel" >"$(_rel_file "$key")"
+
+  # Always verify the VM side: the guest may have rebooted (or been reprovisioned)
+  # out from under a counter that is otherwise perfectly live.
+  ssh_vm "sudo mkdir -p ${vm_dir} && \
+          ( mountpoint -q ${vm_dir} || \
+            sudo mount -t nfs4 -o vers=4,sec=sys ${HOST_IP}:/${rel} ${vm_dir} ) && \
+          mountpoint -q ${vm_dir}" \
+    || { _do_unmount "$rel" "$key" >/dev/null 2>&1 || true
+         die "NFS mount of /${rel} in the VM failed — the workspace is not visible at ${vm_dir}. Check the host share: systemctl is-active nfs-server fclaude-exports && sudo exportfs -v"; }
 }
 
 # Internal: tear down the mount; assumes lock held.
@@ -409,6 +491,7 @@ _do_unmount() {
     sudo exportfs -r 2>/dev/null || true
     # Remove now-empty export dirs up to (not including) EXPORTS_ROOT.
     ( cd "$EXPORTS_ROOT" 2>/dev/null && rmdir -p "$rel" 2>/dev/null ) || true
+    rm -f "$(_rel_file "$key")"
   fi
 }
 
@@ -446,7 +529,7 @@ _do_cleanup() {
   fi
   sudo exportfs -r 2>/dev/null || true
   ( cd "$EXPORTS_ROOT" 2>/dev/null && rmdir -p "$rel" 2>/dev/null ) || true
-  rm -f "$(_count_file "$key")"   # reset the (now stale) refcount
+  rm -f "$(_count_file "$key")" "$(_rel_file "$key")"   # reset the (now stale) refcount
 }
 
 # Public: forcibly tear down ONE workspace mount and clear its refcount,

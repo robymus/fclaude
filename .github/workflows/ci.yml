@@ -34,6 +34,7 @@ jobs:
         run: |
           bash test/test-staleness.sh
           bash test/test-mount-hold.sh
+          bash test/test-mount-selfheal.sh
           bash test/test-wrappers-only.sh
           bash test/test-llmlog-unit.sh
 

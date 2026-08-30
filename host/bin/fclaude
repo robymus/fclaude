@@ -181,7 +181,14 @@ if [[ "$DO_MOUNT" == 1 ]]; then
   abs="$(cd "$DIR" && pwd -P)"
   mount_workspace "$abs"
   trap 'unmount_workspace "$abs"' EXIT
-  ssh_vm_tty "${CLAUDE_LOGIN_ENV} cd ${VM_MOUNT_BASE%/}/${rel} && exec claude --dangerously-skip-permissions ${extra}"
+  # Last-resort guard: mount_workspace already verifies the guest mount, so a
+  # failing `cd` here means the share vanished between mount and login. Say so
+  # in fclaude's own words instead of leaking a bare shell "No such file" that
+  # reads like the user's project directory is missing.
+  vm_dir="${VM_MOUNT_BASE%/}/${rel}"
+  ssh_vm_tty "${CLAUDE_LOGIN_ENV} cd ${vm_dir} 2>/dev/null || { \
+      echo 'fclaude: workspace not mounted in the VM at ${vm_dir} — run: fclaude --cleanup ${rel}' >&2; exit 1; }; \
+    exec claude --dangerously-skip-permissions ${extra}"
 else
   ssh_vm_tty "${CLAUDE_LOGIN_ENV} cd ${VM_MOUNT_BASE} && exec claude --dangerously-skip-permissions ${extra}"
 fi
