@@ -50,6 +50,7 @@ Host firewall (nftables table 'fclaude') blocks VM→host privileged ports (<102
 | `nftables/fclaude.nft.tmpl` | `/etc/fclaude/fclaude.nft` | Firewall: input hook prio -10, allow 53/67/123 to host, reject/drop other <1024 from VM subnet. Bridge name detected at install. |
 | `nfs/fclaude.conf` | `/etc/nfs.conf.d/fclaude.conf` | NFSv4-only (port 2049 only, no rpcbind). |
 | `nfs/fclaude.exports.tmpl` | `/etc/exports.d/fclaude.exports` | Single export root `~/.fclaude/exports` (fsid=0, crossmnt, root_squash, sec=sys). |
+| `nfs/fclaude-sysctl.conf` | `/etc/sysctl.d/90-fclaude-nfs.conf` | `fs.leases-enable=0`: stops nfsd granting NFSv4 delegations. Write delegations on VM-created files made the host's `open(O_NONBLOCK)` return `EAGAIN`, which VS Code shows as `Unknown (FileSystemError)` on the first open (retry works). Host-wide: also disables `F_SETLEASE`. |
 | `sudoers/fclaude.tmpl` | `/etc/sudoers.d/fclaude` | NOPASSWD for `mount`/`umount`/`exportfs` only. |
 | `systemd/fclaude-firewall.service` | `/etc/systemd/system/` | Re-applies nft table on boot (after libvirtd). |
 | `systemd/fclaude-exports.service` | `/etc/systemd/system/` | Recreates export root + `exportfs -r` on boot. |

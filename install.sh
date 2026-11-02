@@ -292,6 +292,10 @@ step "9/14NFS export root + firewall + sudoers (host config)"
 sudo install -d -m 755 /etc/nfs.conf.d /etc/exports.d
 tmpf="$(mktemp)"; render "${REPO_DIR}/host/nfs/fclaude.conf"        "$tmpf"; sudo install -m 644 "$tmpf" /etc/nfs.conf.d/fclaude.conf; rm -f "$tmpf"
 tmpf="$(mktemp)"; render "${REPO_DIR}/host/nfs/fclaude.exports.tmpl" "$tmpf"; sudo install -m 644 "$tmpf" /etc/exports.d/fclaude.exports; rm -f "$tmpf"
+# No NFSv4 delegations (see the file's header). Applied before the restart below
+# so that it also drops any delegation already held.
+sudo install -m 644 "${REPO_DIR}/host/nfs/fclaude-sysctl.conf" /etc/sysctl.d/90-fclaude-nfs.conf
+sudo sysctl --quiet --load /etc/sysctl.d/90-fclaude-nfs.conf
 sudo systemctl restart nfs-server
 sudo exportfs -ra
 info "NFSv4 export root configured: $FCLAUDE_EXPORTS_ROOT"

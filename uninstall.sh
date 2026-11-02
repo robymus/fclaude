@@ -54,7 +54,9 @@ fi
 
 # --- NFS --------------------------------------------------------------------
 step "Removing NFS configuration"
-sudo rm -f /etc/exports.d/fclaude.exports /etc/nfs.conf.d/fclaude.conf
+sudo rm -f /etc/exports.d/fclaude.exports /etc/nfs.conf.d/fclaude.conf \
+  /etc/sysctl.d/90-fclaude-nfs.conf
+sudo sysctl --quiet --write fs.leases-enable=1 2>/dev/null || true
 sudo exportfs -ra 2>/dev/null || true
 # Best-effort: drop any leftover per-session bind mounts under the export root.
 if mountpoint -q "$FCLAUDE_EXPORTS_ROOT" 2>/dev/null; then :; fi

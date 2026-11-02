@@ -37,6 +37,7 @@ jobs:
           bash test/test-mount-selfheal.sh
           bash test/test-wrappers-only.sh
           bash test/test-llmlog-unit.sh
+          bash test/test-nfs-delegations.sh
 
       - name: Ansible syntax-check (rendered playbook)
         run: |
