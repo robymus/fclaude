@@ -105,7 +105,7 @@ the Windows machine. Each phase ends with a verification step.
 
 - [x] `lease` real liveness + `LockFileEx` lock, and `procjob` Job Object: implemented, and tests
       pass on windows-latest CI. (Optionally re-run locally via interop.)
-- [ ] **`internal/win/vmw`** (replaces `vbox`, which is then deleted): `Locate` (registry
+- [x] **`internal/win/vmw`** (done; `vbox` deleted; verified against the real install): `Locate` (registry
       `HKLM\SOFTWARE\VMware, Inc.\VMware Workstation` → `InstallPath`/`ProductVersion`, ≥ 17.5);
       `Runner` over `vmrun -T ws` (start nogui, stop soft/hard, list → state, add/remove/enable
       shared folders); `.vmx` writer (golden-file test; CRLF; hardening keys; shares section;

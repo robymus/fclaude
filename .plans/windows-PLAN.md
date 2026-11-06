@@ -14,8 +14,9 @@ You are a **fresh Claude Code session running inside WSL2 (Ubuntu) on the Window
 section is everything the Linux session knew that the code and git history don't say.
 
 ### 0.1 What exists (done on Linux, all lint- and test-clean)
-**Since 2026-11-06 the hypervisor is VMware Workstation (§10.6).** The `internal/win/vbox` package
-and the `virtualbox` platform value below predate that switch; Phase 6 replaces them (TODO).
+**Since 2026-11-06 the hypervisor is VMware Workstation (§10.6).** The `vbox` package and the
+`virtualbox` platform value mentioned below are gone: `internal/win/vmw` and `fclaude_platform=vmware`
+replaced them (Phase 6).
 - The Go module at the repo root, with the single binary `cmd/fclaude-win`. Its personality comes
   from the exe name: `fclaude`, `fclaude-vscode`, `fclaude-setup`, `fclaude-capture`. **Only
   `--version`/`--help` and `fclaude-capture` work**; the other modes exit 2 with "not

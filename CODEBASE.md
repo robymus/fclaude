@@ -112,8 +112,7 @@ only after that address exists.
 ## Windows host tooling (experimental, Go) — `feat/windows`
 Design and status: [.plans/windows-PLAN.md](.plans/windows-PLAN.md), checklist
 [.plans/windows-TODO.md](.plans/windows-TODO.md). **Hypervisor: VMware Workstation Pro** (switched
-from VirtualBox on 2026-11-06 after it stalled under load on the Hyper-V API; the `vbox` package
-below is replaced by `vmw` in Phase 6). Workspaces shared as per-workspace **HGFS** folders, VS Code wrapper that **rewrites paths** on the stdio JSON stream
+from VirtualBox on 2026-11-06 after it stalled under load on the Hyper-V API). Workspaces shared as per-workspace **HGFS** folders, VS Code wrapper that **rewrites paths** on the stdio JSON stream
 (`C:\dev\app` ⇄ `/home/fclaude/app`). The Linux code paths are unchanged; the shared VM assets
 gain a `fclaude_platform` (`kvm` | `vmware`) switch.
 
@@ -128,7 +127,7 @@ gain a `fclaude_platform` (`kvm` | `vmware`) switch.
 | `internal/win/config` | `config.json` (defaults overlay, unknown keys rejected, all errors reported at once), `WriteNoClobber` → `.new`. |
 | `internal/win/pathmap` | `Mapper` (whole-path + embedded-in-text, file URIs) and `Rewriter`: byte-preserving JSON scanner, rewrites string *values* only, never file-content fields inside tool inputs (`Policy`); `Args` for argv; `Pipe` for streams. Fuzzed. |
 | `internal/win/lease` | Liveness-based refcount: lease file per holder `<pid>-<starttime>`, per-workspace lock (flock / LockFileEx), `Acquire(setup)`/`Release(teardown)`/`Reap`/`Sweep`/`List`. Replaces Linux EXIT-trap counters (Windows kills the wrapper with TerminateProcess). |
-| `internal/win/vbox` | VBoxManage front end via `Runner`: state, start/stop, transient shares, `--machinereadable` parser, `DefineCommands`/`ImportDiskCommands`, `Locate` (env → registry → default). Fixtures are provisional until re-captured on Windows. |
+| `internal/win/vmw` | VMware Workstation front end via `Runner`: `vmrun -T ws` client (start/stop/list, idempotent add/remove shared folders; errors parsed from vmrun's stdout), `Locate` (registry `InstallPath`/`ProductVersion`, ≥ 17.5), VMnet1/VMnet8 subnets from the registry (VM at `.10`), an order-preserving `.vmx` editor that keeps VMware-written keys byte-for-byte (`ClearShares`, `DetachSeed`), `NewVMX` (hardened two-NIC VM, golden file), `vdiskmanager` args, static-range MACs. Fixture: a real Workstation 26 `.vmx`. |
 | `internal/win/seed` | Renders user-data/meta-data/network-config (port of install.sh `render`, fails on leftover `__VAR__`), writes a Rock Ridge ISO labelled `cidata` (go-diskfs). |
 | `internal/win/capture` | R4 research tool: run a command with argv/env(redacted)/cwd/stdio logged as JSONL. |
 | `internal/win/procjob` | Child dies with us: Job Object KILL_ON_JOB_CLOSE (Windows) / Pdeathsig (Linux). |
