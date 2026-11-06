@@ -109,6 +109,31 @@ only after that address exists.
 | `test-mount-selfheal.sh` | Unit tests for the refcounted mount flow in `common.sh`, against a fake mount table (`mountpoint`/`sudo`/`ssh_vm` stubbed; no VM, sudo or network). Covers cold mount, a second session joining a live share, **the leaked-refcount regression** (counter alive, share gone → warn + re-seat to 1 + re-share), a VM that lost its mount under a live counter, rollback on a failed VM mount, last-holder unmount, and the **cold-boot sweep** (`ensure_vm_running` with `virsh`/`ssh_vm` stubbed: `shut off` clears every counter, `running`/`paused` keep them). `bash test/test-mount-selfheal.sh`; run by CI. |
 | `test-mount-hold.sh` | Unit tests for `fclaude --mount <dir>…` (mount-only hold mode). Runs the real script against a temp config + a stub lib that sources the real `common.sh` and overrides only `ensure_vm_running`/`mount_workspace`/`unmount_workspace`, so path validation is exercised for real. Covers: mount order + reverse-order release on Ctrl+C, repeat/`..` dedup, relative paths, no-dirs error, missing dir and out-of-`$HOME` dir (nothing mounted, VM not started), and release-what-was-held when one mount fails. A watchdog SIGINTs the script once it reports holding (falls back to SIGTERM — same trap — if the suite itself was backgrounded, where POSIX makes async children ignore SIGINT). `bash test/test-mount-hold.sh`; run by CI. |
 
+## Windows host tooling (experimental, Go) — `feat/windows`
+Design and status: [.plans/windows-PLAN.md](.plans/windows-PLAN.md), checklist
+[.plans/windows-TODO.md](.plans/windows-TODO.md). VirtualBox VM, workspaces shared as **transient
+vboxsf** folders, VS Code wrapper that **rewrites paths** on the stdio JSON stream
+(`C:\dev\app` ⇄ `/home/fclaude/app`). The Linux code paths are unchanged; the shared VM assets
+gain a `fclaude_platform` (`kvm` | `virtualbox`) switch.
+
+| Path | Role |
+|---|---|
+| `go.mod` | Module `github.com/robymus/fclaude` (repo root), Go 1.26. |
+| `.golangci.yml` | golangci-lint v2 config; CI lints for `GOOS=linux` **and** `GOOS=windows`. |
+| `cmd/fclaude-win/` | Single binary; personality from exe name: `fclaude`, `fclaude-vscode`, `fclaude-setup`, `fclaude-capture`. Only `--version`/`--help` and **capture** work so far; the rest exit 2 "not implemented". |
+| `vm/assets.go` | `go:embed` of site.yml, cloud-init templates, `vm/update/*` — Windows provisions from the same files as Linux. |
+| `vm/cloud-init/network-config-vbox.tmpl` | Two-NIC netplan (NAT dhcp `nat0` + host-only static `host0`), both matched by MAC. |
+| `internal/win/winpath` | Pure-string Windows path semantics (Clean/Rel/WorkspaceRel), identical on Linux CI. Workspaces must be strictly under the share root and not a top-level dot dir. |
+| `internal/win/config` | `config.json` (defaults overlay, unknown keys rejected, all errors reported at once), `WriteNoClobber` → `.new`. |
+| `internal/win/pathmap` | `Mapper` (whole-path + embedded-in-text, file URIs) and `Rewriter`: byte-preserving JSON scanner, rewrites string *values* only, never file-content fields inside tool inputs (`Policy`); `Args` for argv; `Pipe` for streams. Fuzzed. |
+| `internal/win/lease` | Liveness-based refcount: lease file per holder `<pid>-<starttime>`, per-workspace lock (flock / LockFileEx), `Acquire(setup)`/`Release(teardown)`/`Reap`/`Sweep`/`List`. Replaces Linux EXIT-trap counters (Windows kills the wrapper with TerminateProcess). |
+| `internal/win/vbox` | VBoxManage front end via `Runner`: state, start/stop, transient shares, `--machinereadable` parser, `DefineCommands`/`ImportDiskCommands`, `Locate` (env → registry → default). Fixtures are provisional until re-captured on Windows. |
+| `internal/win/seed` | Renders user-data/meta-data/network-config (port of install.sh `render`, fails on leftover `__VAR__`), writes a Rock Ridge ISO labelled `cidata` (go-diskfs). |
+| `internal/win/capture` | R4 research tool: run a command with argv/env(redacted)/cwd/stdio logged as JSONL. |
+| `internal/win/procjob` | Child dies with us: Job Object KILL_ON_JOB_CLOSE (Windows) / Pdeathsig (Linux). |
+| `internal/win/mcphelper` | Port of `fc_is_mcp_helper`. |
+| `.github/workflows/release-windows.yml` | Tag `v*-win*` → lint+test gate → `fclaude-setup.exe` + `SHA256SUMS` prerelease. |
+
 ## Runtime state (created on the host by install, never in the repo)
 `~/.fclaude/`: `fclaude-disk` (32G raw ext4 VM disk), `seed.iso`, `config`, `vm` (identity),
 `ssh/` (keypairs), `exports/` (NFSv4 root; session dirs bind-mounted here), `refcounts/`

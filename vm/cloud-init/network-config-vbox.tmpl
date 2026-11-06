@@ -1,0 +1,26 @@
+# cloud-init NoCloud network configuration (netplan v2) — VirtualBox variant.
+# Used by the experimental Windows host tooling only; the KVM host uses
+# network-config.tmpl. Two NICs, each pinned by MAC:
+#   nat0  — VirtualBox NAT: internet access (DHCP from the NAT engine).
+#   host0 — host-only network: static address the Windows host reaches over ssh.
+#           No gateway/DNS/router advertisements here, so the default route
+#           stays on the NAT NIC.
+# Both carry the same conservative MTU as the KVM variant (tunnel tolerance).
+version: 2
+ethernets:
+  nat0:
+    match:
+      macaddress: "__FCLAUDE_VM_MAC_NAT__"
+    set-name: "nat0"
+    dhcp4: true
+    dhcp6: false
+    mtu: __FCLAUDE_VM_MTU__
+  host0:
+    match:
+      macaddress: "__FCLAUDE_VM_MAC_HOSTONLY__"
+    set-name: "host0"
+    dhcp4: false
+    dhcp6: false
+    accept-ra: false
+    addresses: ["__FCLAUDE_VM_IP__/__FCLAUDE_HOSTONLY_PREFIX__"]
+    mtu: __FCLAUDE_VM_MTU__

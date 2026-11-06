@@ -174,6 +174,37 @@
         - host_user | length > 0
         - host_user != fclaude_user
 
+    # --- VirtualBox host (experimental Windows tooling) ---
+    # Workspaces arrive as VirtualBox transient shared folders, mounted by the
+    # host wrapper with `mount -t vboxsf`. The module ships in the stock
+    # linux-modules package (no Guest Additions); load it at boot so the first
+    # mount never races module autoload.
+    - name: Load the vboxsf module at boot (VirtualBox host)
+      ansible.builtin.copy:
+        dest: /etc/modules-load.d/fclaude-vboxsf.conf
+        content: "vboxsf\n"
+        owner: root
+        group: root
+        mode: '0644'
+      when: (fclaude_platform | default('kvm')) == 'virtualbox'
+
+    # Repos on a Windows host are usually checked out by Git for Windows with
+    # core.autocrlf=true (its default): CRLF in the work tree, LF in the index.
+    # Without the same setting here every text file looks modified to the VM's
+    # git. vboxsf also reports stat data that differs from what NTFS-native git
+    # recorded in the index, so compare only what both sides agree on.
+    - name: System git config for Windows-hosted repos (VirtualBox host)
+      # `git config --system` is itself idempotent; plain command keeps the
+      # playbook free of extra collections (only ansible.posix is required).
+      ansible.builtin.command:
+        argv: [git, config, --system, "{{ item.name }}", "{{ item.value }}"]
+      changed_when: false
+      loop:
+        - { name: core.autocrlf, value: 'true' }
+        - { name: core.checkStat, value: minimal }
+        - { name: core.trustctime, value: 'false' }
+      when: (fclaude_platform | default('kvm')) == 'virtualbox'
+
     # --- Weekly apt/system-package upgrade (optional; network-speed gated) ---
     # Claude Code updates itself (native auto-updater); this timer keeps apt /
     # Docker / Node current. The script + units are the canonical files under

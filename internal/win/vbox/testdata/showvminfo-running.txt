@@ -1,0 +1,18 @@
+name="fclaude"
+Encryption:     disabled
+groups="/"
+ostype="Ubuntu (64-bit)"
+UUID="fc1aede0-0000-4000-8000-525400fc1ade"
+CfgFile="C:\\Users\\bro\\VirtualBox VMs\\fclaude\\fclaude.vbox"
+memory=8192
+cpus=6
+VMState="running"
+VMStateChangeTime="2026-11-06T18:00:00.000000000"
+"SATA-0-0"="C:\\Users\\bro\\.fclaude\\fclaude-disk.vdi"
+nic1="nat"
+nic2="hostonly"
+hostonlyadapter2="VirtualBox Host-Only Ethernet Adapter"
+SharedFolderNameTransientMapping1="fc-0a1b2c3d4e5f6071"
+SharedFolderPathTransientMapping1="C:\\dev\\app"
+SharedFolderNameTransientMapping2="fc-quote"
+SharedFolderPathTransientMapping2="C:\\dev\\say \"hi\""
