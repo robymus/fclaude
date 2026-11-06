@@ -115,7 +115,7 @@ Design and status: [.plans/windows-PLAN.md](.plans/windows-PLAN.md), checklist
 from VirtualBox on 2026-11-06 after it stalled under load on the Hyper-V API; the `vbox` package
 below is replaced by `vmw` in Phase 6). Workspaces shared as per-workspace **HGFS** folders, VS Code wrapper that **rewrites paths** on the stdio JSON stream
 (`C:\dev\app` ⇄ `/home/fclaude/app`). The Linux code paths are unchanged; the shared VM assets
-gain a `fclaude_platform` (`kvm` | `virtualbox`) switch.
+gain a `fclaude_platform` (`kvm` | `vmware`) switch.
 
 | Path | Role |
 |---|---|
@@ -123,7 +123,7 @@ gain a `fclaude_platform` (`kvm` | `virtualbox`) switch.
 | `.golangci.yml` | golangci-lint v2 config; CI lints for `GOOS=linux` **and** `GOOS=windows`. |
 | `cmd/fclaude-win/` | Single binary; personality from exe name: `fclaude`, `fclaude-vscode`, `fclaude-setup`, `fclaude-capture`. Only `--version`/`--help` and **capture** work so far; the rest exit 2 "not implemented". |
 | `vm/assets.go` | `go:embed` of site.yml, cloud-init templates, `vm/update/*` — Windows provisions from the same files as Linux. |
-| `vm/cloud-init/network-config-vbox.tmpl` | Two-NIC netplan (NAT dhcp `nat0` + host-only static `host0`), both matched by MAC. |
+| `vm/cloud-init/network-config-win.tmpl` | Two-NIC netplan (NAT dhcp `nat0` + host-only static `host0`), both matched by MAC, hypervisor-neutral. MTU from the host tooling (`seed.MTU` = 1500 for VMware, whose NAT breaks HTTPS below that). |
 | `internal/win/winpath` | Pure-string Windows path semantics (Clean/Rel/WorkspaceRel), identical on Linux CI. Workspaces must be strictly under the share root and not a top-level dot dir. |
 | `internal/win/config` | `config.json` (defaults overlay, unknown keys rejected, all errors reported at once), `WriteNoClobber` → `.new`. |
 | `internal/win/pathmap` | `Mapper` (whole-path + embedded-in-text, file URIs) and `Rewriter`: byte-preserving JSON scanner, rewrites string *values* only, never file-content fields inside tool inputs (`Policy`); `Args` for argv; `Pipe` for streams. Fuzzed. |

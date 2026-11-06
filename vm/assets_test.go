@@ -10,7 +10,7 @@ import (
 func TestEmbeddedAssets(t *testing.T) {
 	want := []string{
 		"ansible/site.yml",
-		"cloud-init/user-data.tmpl", "cloud-init/meta-data.tmpl", "cloud-init/network-config-vbox.tmpl",
+		"cloud-init/user-data.tmpl", "cloud-init/meta-data.tmpl", "cloud-init/network-config-win.tmpl",
 		"update/fclaude-apt-upgrade.sh", "update/fclaude-apt-upgrade.service", "update/fclaude-apt-upgrade.timer",
 	}
 	for _, name := range want {

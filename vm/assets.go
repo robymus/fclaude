@@ -12,6 +12,6 @@ import "embed"
 // relative to the vm/ directory (e.g. "ansible/site.yml").
 //
 //go:embed ansible/site.yml
-//go:embed cloud-init/user-data.tmpl cloud-init/meta-data.tmpl cloud-init/network-config-vbox.tmpl
+//go:embed cloud-init/user-data.tmpl cloud-init/meta-data.tmpl cloud-init/network-config-win.tmpl
 //go:embed update/fclaude-apt-upgrade.sh update/fclaude-apt-upgrade.service update/fclaude-apt-upgrade.timer
 var Files embed.FS

@@ -16,7 +16,7 @@ FCLAUDE_VM_UID="1000"            # match host uid for clean NFS ownership
 # Host platform the VM is provisioned for. Passed to the in-VM playbook as
 # -e fclaude_platform=…; 'kvm' is this Linux/libvirt host. The experimental
 # Windows tooling (Go, cmd/fclaude-win) renders the same templates with
-# 'virtualbox', which enables the VirtualBox-only tasks in site.yml.
+# 'vmware' (VMware Workstation), which enables the Windows-host tasks in site.yml.
 FCLAUDE_PLATFORM="kvm"
 
 # --- Networking (libvirt default NAT network) ---

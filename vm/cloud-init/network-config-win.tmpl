@@ -1,11 +1,13 @@
-# cloud-init NoCloud network configuration (netplan v2) — VirtualBox variant.
+# cloud-init NoCloud network configuration (netplan v2) — Windows host variant.
 # Used by the experimental Windows host tooling only; the KVM host uses
-# network-config.tmpl. Two NICs, each pinned by MAC:
-#   nat0  — VirtualBox NAT: internet access (DHCP from the NAT engine).
+# network-config.tmpl. Two NICs, each pinned by MAC, so it is hypervisor-neutral:
+#   nat0  — NAT: internet access (DHCP from the hypervisor's NAT service).
 #   host0 — host-only network: static address the Windows host reaches over ssh.
 #           No gateway/DNS/router advertisements here, so the default route
 #           stays on the NAT NIC.
-# Both carry the same conservative MTU as the KVM variant (tunnel tolerance).
+# The MTU is chosen per hypervisor by the host tooling: VMware's NAT is a
+# userspace TCP proxy that ignores a smaller guest MSS, so VMware needs 1500
+# (with 1400 every HTTPS handshake hangs).
 version: 2
 ethernets:
   nat0:

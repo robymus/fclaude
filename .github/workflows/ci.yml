@@ -52,8 +52,8 @@ jobs:
               -e "s|__APT_UPGRADE_TIMER_B64__|${apt_tmr_b64}|g" \
               vm/ansible/site.yml > "$rendered"
           ansible-playbook --syntax-check -i localhost, "$rendered"
-          # The VirtualBox (Windows host) variant enables extra gated tasks.
-          ansible-playbook --syntax-check -i localhost, -e fclaude_platform=virtualbox "$rendered"
+          # The VMware (Windows host) variant enables extra gated tasks.
+          ansible-playbook --syntax-check -i localhost, -e fclaude_platform=vmware "$rendered"
 
   # Experimental Windows host tooling (Go): lint for both target OSes, unit
   # tests with the race detector, and a Windows cross-build.

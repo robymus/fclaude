@@ -18,7 +18,7 @@ func params() Params {
 	return Params{
 		VMName: "fclaude", VMUser: "fclaude", VMUID: 1000, MaintUser: "maint",
 		PubKey: "ssh-ed25519 AAAAC3Nza fclaude", MaintPubKey: "ssh-ed25519 AAAAC3Nzb maint",
-		AnsibleDir: "/var/lib/fclaude/ansible", UpdateApt: true, MTU: 1400,
+		AnsibleDir: "/var/lib/fclaude/ansible", UpdateApt: true, MTU: MTU,
 		MACNAT: "52:54:00:FC:1A:DF", MACHostOnly: "52:54:00:fc:1a:e0",
 		VMIP: "192.168.56.10", HostOnlyPrefix: 24,
 	}
@@ -33,14 +33,14 @@ func TestFilesRender(t *testing.T) {
 	if !strings.HasPrefix(ud, "#cloud-config\n") {
 		t.Error("user-data must start with #cloud-config")
 	}
-	for _, want := range []string{"'fclaude_platform=virtualbox'", "'host_user='", "'fclaude_update_apt=1'",
+	for _, want := range []string{"'fclaude_platform=vmware'", "'host_user='", "'fclaude_update_apt=1'",
 		`"ssh-ed25519 AAAAC3Nza fclaude"`, "uid: 1000"} {
 		if !strings.Contains(ud, want) {
 			t.Errorf("user-data missing %q", want)
 		}
 	}
 	nc := string(files["network-config"])
-	for _, want := range []string{`"52:54:00:fc:1a:df"`, `"52:54:00:fc:1a:e0"`, `"192.168.56.10/24"`, "mtu: 1400"} {
+	for _, want := range []string{`"52:54:00:fc:1a:df"`, `"52:54:00:fc:1a:e0"`, `"192.168.56.10/24"`, "mtu: 1500"} {
 		if !strings.Contains(nc, want) {
 			t.Errorf("network-config missing %q", want)
 		}

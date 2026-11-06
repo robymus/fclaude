@@ -144,7 +144,7 @@ func Files(p Params) (map[string][]byte, error) {
 		"FCLAUDE_VM_ANSIBLE_DIR":  p.AnsibleDir,
 		"ANSIBLE_SITE_B64":        site,
 		"FCLAUDE_UPDATE_APT":      updateApt,
-		"FCLAUDE_PLATFORM":        "virtualbox",
+		"FCLAUDE_PLATFORM":        Platform,
 		"USER":                    "", // no host-home bind mount: paths are mapped by the wrapper
 		"FCLAUDE_VM_MTU":          strconv.Itoa(p.MTU),
 		"FCLAUDE_VM_MAC_NAT":      strings.ToLower(p.MACNAT),
@@ -156,7 +156,7 @@ func Files(p Params) (map[string][]byte, error) {
 	for name, tmpl := range map[string]string{
 		"user-data":      "cloud-init/user-data.tmpl",
 		"meta-data":      "cloud-init/meta-data.tmpl",
-		"network-config": "cloud-init/network-config-vbox.tmpl",
+		"network-config": "cloud-init/network-config-win.tmpl",
 	} {
 		src, err := readAsset(tmpl)
 		if err != nil {
@@ -170,6 +170,15 @@ func Files(p Params) (map[string][]byte, error) {
 	}
 	return out, nil
 }
+
+// Platform is the fclaude_platform value the Windows tooling provisions for
+// (site.yml gates the Windows-host tasks on it; the Linux host uses "kvm").
+const Platform = "vmware"
+
+// MTU is the NIC MTU for the VMware VM. VMware's NAT is a userspace TCP proxy
+// that ignores a smaller guest MSS, so anything below 1500 makes HTTPS
+// handshakes hang (PLAN §3.7).
+const MTU = 1500
 
 // VolumeLabel is the NoCloud datasource label.
 const VolumeLabel = "cidata"

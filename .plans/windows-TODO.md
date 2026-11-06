@@ -99,7 +99,7 @@ the Windows machine. Each phase ends with a verification step.
       open by Windows with sharing allowed: all ops work; held exclusively: EACCES (and `mv` says
       ENOENT). **Follow-up (Phase 6 share/Phase 8):** VM-local `node_modules` bind mount.
 - [x] **R8** Claude OAuth login over Windows `ssh.exe -t` in Windows Terminal (VMware VM): URL copy, code paste, rendering, resize, Ctrl+C all fine (user, 2026-11-06).
-- [ ] **Verify:** PLAN updated with results; any flipped decision noted in §3 with the reason.
+- [x] **Verify:** PLAN updated with results (§0.7); the flipped hypervisor decision is in §3.1/§10.6.
 
 ## Phase 6 — Windows-API packages (W, CI on windows-latest)
 
@@ -112,7 +112,7 @@ the Windows machine. Each phase ends with a verification step.
       `ClearShares` for the cold-boot sweep; seed CD-ROM detach); VMnet discovery from
       `VMnetLib\VMnetConfig\vmnet{1,8}\IPSubnetAddress` (VM IP = subnet `.10`); `vdiskmanager`
       convert/grow commands. Static VMware MACs in `00:50:56:00:00:00–3F:FF:FF`.
-- [ ] Provisioning for `fclaude_platform=vmware`: site.yml (open-vm-tools task; vboxsf task
+- [x] Provisioning for `fclaude_platform=vmware` (done; fresh-VM verify deferred to the first `vmw`-built VM): site.yml (open-vm-tools task; vboxsf task
       dropped; git config for any non-`kvm` platform); rename `network-config-vbox.tmpl` →
       `network-config-win.tmpl`; seed MTU 1500 for VMware; `seed` platform param instead of the
       hard-coded `virtualbox`; CI ansible syntax-check with `vmware`. **Verify** with a fresh VM.
