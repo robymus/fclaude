@@ -6,3 +6,5 @@
 
 # Fixtures that must keep CRLF (they test CRLF parsing).
 *-crlf.txt -text
+internal/win/vmw/testdata/*.vmx -text
+internal/win/vmw/testdata/*.golden -text
