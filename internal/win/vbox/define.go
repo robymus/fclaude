@@ -94,9 +94,17 @@ func DefineCommands(s VMSpec) ([][]string, error) {
 
 // ImportDiskCommands converts the downloaded cloud-image VMDK into the VM's
 // VDI and grows it to sizeMiB (the guest grows its partition on first boot).
+//
+// clonemedium registers the source in the global media registry, and the
+// Ubuntu VMDK carries an all-zero UUID, so a second import from the same file
+// fails ("UUID ... does not match the value stored in the media registry").
+// The source is therefore closed before (a stale entry from an interrupted
+// run) and after the clone; closemedium on an unregistered file succeeds.
 func ImportDiskCommands(vmdk, vdi string, sizeMiB int) [][]string {
 	return [][]string{
+		{"closemedium", "disk", vmdk},
 		{"clonemedium", "disk", vmdk, vdi, "--format", "VDI"},
+		{"closemedium", "disk", vmdk},
 		{"modifymedium", "disk", vdi, "--resize", strconv.Itoa(sizeMiB)},
 	}
 }

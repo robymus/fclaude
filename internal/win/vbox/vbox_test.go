@@ -195,7 +195,9 @@ func TestDefineCommands(t *testing.T) {
 
 func TestImportDiskCommands(t *testing.T) {
 	got := ImportDiskCommands("a.vmdk", "b.vdi", 32768)
-	want := [][]string{{"clonemedium", "disk", "a.vmdk", "b.vdi", "--format", "VDI"},
+	want := [][]string{{"closemedium", "disk", "a.vmdk"},
+		{"clonemedium", "disk", "a.vmdk", "b.vdi", "--format", "VDI"},
+		{"closemedium", "disk", "a.vmdk"},
 		{"modifymedium", "disk", "b.vdi", "--resize", "32768"}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("%q", got)
