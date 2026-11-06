@@ -55,10 +55,13 @@ func fixture(t *testing.T, name string) string {
 func TestParseMachineReadable(t *testing.T) {
 	m := ParseMachineReadable(fixture(t, "showvminfo-running.txt"))
 	want := map[string]string{
-		"VMState":  "running",
-		"memory":   "8192",
-		"CfgFile":  `C:\Users\bro\VirtualBox VMs\fclaude\fclaude.vbox`,
-		"SATA-0-0": `C:\Users\bro\.fclaude\fclaude-disk.vdi`,
+		"VMState":            "running",
+		"memory":             "2048",
+		"CfgFile":            `C:\Users\bro\VirtualBox VMs\fclaude\fclaude.vbox`,
+		"SATA-0-0":           `C:\Users\bro\.fclaude\tmp\spike.vdi`,
+		"localhostReachable": "1", // see PLAN §0.3: does not survive a VBoxSVC restart
+		// VBoxManage 7.2 does NOT escape this one value's backslashes.
+		"uartmode1": `file,C:\Users\bro\.fclaude\tmp\spike-console.log`,
 	}
 	for k, v := range want {
 		if m[k] != v {
@@ -67,6 +70,9 @@ func TestParseMachineReadable(t *testing.T) {
 	}
 	if _, ok := m["Encryption:     disabled"]; ok {
 		t.Error("non key=value line parsed")
+	}
+	if m := ParseMachineReadable(`k="say \"hi\" C:\\x"`); m["k"] != `say "hi" C:\x` {
+		t.Errorf("escapes: %q", m["k"])
 	}
 	if m := ParseMachineReadable(`"unterminated=1` + "\n" + `k="v`); len(m) != 0 {
 		t.Errorf("malformed lines parsed: %v", m)
@@ -78,7 +84,9 @@ func TestParseMachineReadable(t *testing.T) {
 
 func TestTransientShares(t *testing.T) {
 	got := TransientShares(ParseMachineReadable(fixture(t, "showvminfo-running.txt")))
-	want := []Share{{"fc-0a1b2c3d4e5f6071", `C:\dev\app`}, {"fc-quote", `C:\dev\say "hi"`}}
+	// Real capture: non-ASCII survives; VirtualBox drops the trailing `\`
+	// we passed for fc-b.
+	want := []Share{{"fc-0a1b2c3d4e5f6071", `C:\dev\spike share é`}, {"fc-b", `C:\dev\spike2`}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got %+v", got)
 	}

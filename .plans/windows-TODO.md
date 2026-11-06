@@ -61,9 +61,13 @@ the Windows machine. Each phase ends with a verification step.
 
 ## Phase 5 — Windows environment + spikes (W)
 
-- [ ] Check prereqs (the user preinstalled them; list in PLAN §0.5). CI was already green on Windows
-      (4ce09eb); re-check after any change.
-- [ ] Confirm PLAN §0.3 assumptions #1–#3 against the real VBoxManage (create a throwaway VM).
+- [x] Check prereqs (PLAN §0.5): all present (VirtualBox 7.2.22, OpenSSH 9.5, Git for Windows 2.56,
+      VS Code + extension 2.1.318, Dev Mode on, `C:\dev\base-dev-skills`, 31 GiB RAM). WSL fixes:
+      GOPATH was `~/go` = GOROOT (`go env -w GOPATH=~/gopath`); `gcc` + `libc6-dev` installed for
+      `-race`. The full gate is green, and **all 11 packages' tests pass as native Windows exes via
+      interop** after a test fix (re-exec `os.Executable()`, not the relative `os.Args[0]`).
+- [x] Confirm PLAN §0.3 assumptions #1–#3: flags OK, fixtures re-captured, host-only changes need
+      admin (UAC; installer default adapter is already correct). **Found the NAT localhost-reachable persistence bug** (PLAN §0.3), so the fix moves to R6.
 - [ ] **R4 capture (first, no VM needed):** cross-build `fclaude-capture.exe` (already implemented)
       into `%USERPROFILE%\.fclaude\bin`, set it as `claudeCode.claudeProcessWrapper`, run the R4
       scenario list in VS Code (logs land in `%USERPROFILE%\.fclaude\captures\`);
@@ -71,7 +75,8 @@ the Windows machine. Each phase ends with a verification step.
       against it and fix any path form the tables missed.
 - [ ] **R1** VirtualBox on Hyper-V (WSL2 on, running concurrently): boot, 30-min stability, perf →
       record in PLAN. **Gate:** if not viable, stop and raise the Hyper-V-backend alternative with user.
-- [ ] **R6** NAT `10.0.2.2` reachability matrix → record; pick §3.7 fallback if needed.
+- [ ] **R6** NAT `10.0.2.2` reachability matrix → record; pick §3.7 fallback if needed. Run it
+      with `localhostReachable` both 0 and 1 (see the PLAN §0.3 bug), and test the extradata fix.
 - [ ] **R2** vboxsf test matrix (git, npm symlinks, locked-file rename, VS Code open-after-create,
       big file, case rename, sqlite fsync, transient-share symlink extradata) → **gate: vboxsf vs SMB**.
 - [ ] **R3** transient share add/remove-while-mounted behaviour → fix the release ordering.
@@ -94,6 +99,9 @@ the Windows machine. Each phase ends with a verification step.
       single UAC `install-elevated`, binaries + PATH, config/vm.json, boot+wait w/ progress + host-key
       pin, optional VS Code settings.json edit + login launch).
 - [ ] Upgrade path: newer setup over existing install → binaries only, never VM/disk.
+- [ ] NAT hardening that survives VBoxSVC restarts (fix chosen in R6). Every `startvm` path
+      re-asserts the setting and reads back `localhostReachable="0"`, or refuses to start.
+      `vbox.State()` retries on `E_ACCESSDENIED` "object is not ready".
 - [ ] `install-elevated` (firewall, VirtualBox via winget) + `uninstall` (typed confirm, detach disk before unregister,
       separate `DELETE DISK`) + `grow-disk` (offline resize + in-VM grow).
 - [ ] Tests: disk guard, config-not-overwritten, uninstall never touches disk without the phrase,

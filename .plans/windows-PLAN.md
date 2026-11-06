@@ -53,16 +53,37 @@ section is everything the Linux session knew that the code and git history don't
   if you clone the repo on the Windows side (not in WSL), check `git ls-files --eol`.**
 
 ### 0.3 Unverified assumptions to check first on Windows
-These are marked in the code, too.
-1. **VBoxManage flag spellings** in `vbox.DefineCommands` (7.1 names: `--audio-enabled`,
-   `--usb-ohci`, `--clipboard-mode`, `--drag-and-drop`, `--nat-localhostreachable1`,
-   `--uart-mode1 file`). Run each one; fix whatever fails.
-2. **`--machinereadable` format:** the quoting and backslash escaping of Windows paths, and the
-   transient-share key names (`SharedFolderNameTransientMapping<N>` /
-   `SharedFolderPathTransientMapping<N>`). Re-capture `internal/win/vbox/testdata/*.txt` from a
-   real VM and update the parser and tests to match.
-3. **Host-only adapter creation** (`VBoxManage hostonlyif create`) probably needs admin. If so, it
-   belongs in the single elevated step together with the firewall rules.
+These are marked in the code, too. **#1–#3 checked on 2026-11-06** (VirtualBox 7.2.22, Windows 11
+26200, from WSL against a throwaway VM `fclaude-spike` with an empty disk):
+1. **VBoxManage flag spellings** in `vbox.DefineCommands`: **all accepted, and all took effect**
+   (verified in `--machinereadable` and the `.vbox` XML). **But see the NAT bug below.**
+2. **`--machinereadable` format:** confirmed: CRLF line endings; quoted values escape `\` and `"`;
+   transient-share keys are `SharedFolder{Name,Path}TransientMapping<N>`; non-ASCII paths are
+   UTF-8; a trailing `\` on `--hostpath` is dropped. **Exception:** `uartmode1="file,C:\Users\…"`
+   is *not* escaped. The parser already handles that (an unknown escape stays literal). Fixtures
+   in `internal/win/vbox/testdata/` are now real captures.
+   - `showvminfo` issued *during* a poweroff transition fails with `E_ACCESSDENIED` "The object is
+     not ready". `State()` must retry briefly on that error rather than report failure.
+3. **Host-only adapter changes DO need admin.** VBoxManage, run unelevated, raises its own UAC
+   prompt for `hostonlyif create`/`remove` (and probably `ipconfig`), and succeeds only if the
+   user approves. (A first reading of "no admin" was wrong: the user had been approving the
+   prompts.) So these belong in the single elevated step, as planned. The VirtualBox installer
+   already creates `VirtualBox Host-Only Ethernet Adapter` at 192.168.56.1/24, so setup normally
+   only *verifies* it (`list hostonlyifs` needs no admin) and elevates only when it is missing
+   or misaddressed. The VirtualBox DHCP server on that network is **enabled** by default (range
+   .100+, so the static .10 is safe), and step 6 still disables it.
+
+**NAT localhost-reachable bug (security, found 2026-11-06):** `modifyvm --nat-localhostreachable1
+off` reads back as `0`, but VirtualBox persists "off" by **omitting** the attribute (`<NAT/>`).
+When VBoxSVC restarts (it exits after ~6 s idle, and on every reboot), it reloads a missing
+attribute as **true**. The VM then reports `localhostReachable="1"` with no one touching it.
+Reproduced deterministically: set off → wait for VBoxSVC to exit → reads 1. So a set-once
+install step is worthless. Candidate fixes, to be validated against a real guest in R6:
+(a) re-apply `off` and read back `0` immediately before every `startvm` (the VM process keeps
+its config once started; VBoxSVC stays alive between the two calls), and refuse to start
+otherwise; (b) an explicit NAT-driver extradata key (`VBoxInternal/Devices/virtio-net/0/LUN#0/
+AttachedDriver/Config/LocalhostReachable`), which is persisted verbatim. A VM started from the
+VirtualBox GUI bypasses (a), so (b), or both, is preferable if R6 shows it works.
 4. **Path forms in the extension protocol:** drive-letter case, the `file:///c%3A/` URI form, and
    which keys hold file content. `pathmap.DefaultPolicy` is a first guess; the R4 capture decides.
 5. **Can WSL reach the VM** on 192.168.56.10? That matters only for your own testing (the
