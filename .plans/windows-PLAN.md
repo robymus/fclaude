@@ -637,7 +637,7 @@ Workspaces must be under `SHARE_ROOT`. Otherwise the wrapper prints a clear erro
 | R5 | Does Option A make diffs and file links work end to end? | After building the rewriter: the same scenario list as R4, checked by hand. | Ship A | B, or A with known gaps listed |
 | R6 | What can the VM reach on the host through NAT? | TCP probes from the VM to the NAT gateway and the host addresses on real loopback-only and all-interface services. | **Done.** VirtualBox: depends on a flaky setting. **VMware: the NAT gateway reaches nothing** (§0.7) | — |
 | R7 | Does the extension time out while the wrapper cold-boots the VM (~30 s)? | Shut the VM off, open the Claude panel. | Fine | Print progress to stderr; optionally autostart the VM at logon (a Task Scheduler entry `fclaude.exe --start`) |
-| R8 | Does the Claude login (OAuth paste flow) work over `ssh.exe -t` in Windows Terminal? | `fclaude --maintenance`, then `claude`. | — | Log in via `fclaude --no-mount` |
+| R8 | Does the Claude login (OAuth paste flow) work over `ssh.exe -t` in Windows Terminal? | `fclaude --maintenance`, then `claude`. | **PASSED** (VMware VM, Windows Terminal, 2026-11-06) | — |
 
 **R4 method (revised): native pass-through capture on Windows, day one.** The extension calls
 the wrapper as `wrapper <bundled claude.exe> <flags…>`. `fclaude-capture.exe` (the same binary, renamed; **already implemented**, see

@@ -95,7 +95,7 @@ the Windows machine. Each phase ends with a verification step.
       `--no-bin-links` vs a VM-local `node_modules`; rename while VS Code holds the file;
       create-in-VM → open in VS Code; 1 GB file; case-only rename; sqlite fsync; small-file perf
       (`git status` on a big tree) → **gate: HGFS vs SMB**. Light load; say so before running.
-- [ ] **R8** Claude OAuth login over `ssh.exe -t`.
+- [x] **R8** Claude OAuth login over Windows `ssh.exe -t` in Windows Terminal (VMware VM): URL copy, code paste, rendering, resize, Ctrl+C all fine (user, 2026-11-06).
 - [ ] **Verify:** PLAN updated with results; any flipped decision noted in §3 with the reason.
 
 ## Phase 6 — Windows-API packages (W, CI on windows-latest)
