@@ -111,8 +111,9 @@ only after that address exists.
 
 ## Windows host tooling (experimental, Go) — `feat/windows`
 Design and status: [.plans/windows-PLAN.md](.plans/windows-PLAN.md), checklist
-[.plans/windows-TODO.md](.plans/windows-TODO.md). VirtualBox VM, workspaces shared as **transient
-vboxsf** folders, VS Code wrapper that **rewrites paths** on the stdio JSON stream
+[.plans/windows-TODO.md](.plans/windows-TODO.md). **Hypervisor: VMware Workstation Pro** (switched
+from VirtualBox on 2026-11-06 after it stalled under load on the Hyper-V API; the `vbox` package
+below is replaced by `vmw` in Phase 6). Workspaces shared as per-workspace **HGFS** folders, VS Code wrapper that **rewrites paths** on the stdio JSON stream
 (`C:\dev\app` ⇄ `/home/fclaude/app`). The Linux code paths are unchanged; the shared VM assets
 gain a `fclaude_platform` (`kvm` | `virtualbox`) switch.
 

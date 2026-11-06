@@ -73,7 +73,7 @@ the Windows machine. Each phase ends with a verification step.
       drive-case only, 1 `partial_json` fragment left for R5). Fix: Mapper keeps the root's drive
       case + `RootSpelling(root, cwd)`. Queued for Phase 9: `auth status` skips the mount;
       forward `CLAUDE_*` env; `partial_json` decision.
-- [!] **R1 — FAILED; Windows port ON HOLD (2026-11-06, user decision).** VirtualBox 7.2.22 on the
+- [x] **R1 — VirtualBox FAILED** (2026-11-06). VirtualBox 7.2.22 on the
       Hyper-V API (NEM "snail mode", WSL2 on) is not viable on this host (Win 11 Home, Ryzen 7840HS):
       under full 6-vCPU load the guest stalls for seconds to minutes (RCU stalls, ssh unreachable;
       a 90 s stress run takes 160 s+). Idle use and provisioning (396 s) work; memory `--verify`
@@ -82,22 +82,19 @@ the Windows machine. Each phase ends with a verification step.
       off + hyperv 0/15 once (not reproduced); **Windows Hypervisor Platform on** + default 6/15 (20
       warnings), + hyperv 7/15. Guest clocksource fell back to `acpi_pm`. Plus one intermittent
       first-boot initramfs livelock.
-      **Untested knobs, if resumed:** fewer vCPUs (2/4) with hyperv paravirt; `--x86-x2apic off`;
-      guest `clocksource=tsc tsc=reliable`.
-      **Alternatives** (PLAN §0.7 R1): drop the WSL2 requirement so VirtualBox gets AMD-V natively
-      (user to check conditions); VMware Workstation on the Hyper-V API (works on Home, untested);
-      Hyper-V direct (Pro only); or the brother runs Linux natively and uses the existing KVM
-      fclaude. Everything from R4/R6/§0.3 stays valid for any VirtualBox-native outcome.
+      Untested knobs: fewer vCPUs with hyperv paravirt, x2APIC off, guest clocksource override.
 - [x] **R1-VMware spike:** VMware Workstation Pro 26.0.1 passes the identical load trial (0/15
       misses, 0 warnings). Live HGFS shares need no admin and self-heal on re-add; the NAT reaches
-      nothing on the host. Needs MTU 1500. No symlinks. Details in PLAN §0.7. **Decision (user):**
-      switch the Windows port to VMware? If yes: re-plan Phases 6–7 around `vmrun` + `.vmx` + HGFS.
-- [x] **R6** NAT `10.0.2.2` matrix (PLAN §0.7): with `0` nothing is reachable; with `1` the host's
-      loopback services plus 135/445 are reachable, and the extradata fix fails. Decision:
-      re-assert + read back before every start, and refuse sessions on a running VM showing `1`.
-- [ ] **R2** vboxsf test matrix (git, npm symlinks, locked-file rename, VS Code open-after-create,
-      big file, case rename, sqlite fsync, transient-share symlink extradata) → **gate: vboxsf vs SMB**.
-- [ ] **R3** transient share add/remove-while-mounted behaviour → fix the release ordering.
+      nothing on the host. Needs MTU 1500. No symlinks. Details in PLAN §0.7. **Decision (user,
+      2026-11-06): switch to VMware** (PLAN §10.6). PLAN §3.1/3.2/3.7/3.8/§4 re-planned.
+- [x] **R6** VirtualBox: with `localhostReachable=1` the host's loopback services and 135/445 are
+      reachable via `10.0.2.2` (moot after the switch). **VMware: the NAT gateway reaches nothing.**
+- [x] **R3** (VMware): remove-while-mounted empties the mount, re-add heals it; order guest
+      `umount` → `removeSharedFolder`. (Loop-test ×50 in Phase 6 Verify.)
+- [ ] **R2** HGFS test matrix (PLAN §6): git clone/status/commit on a Windows-git repo; npm ci with
+      `--no-bin-links` vs a VM-local `node_modules`; rename while VS Code holds the file;
+      create-in-VM → open in VS Code; 1 GB file; case-only rename; sqlite fsync; small-file perf
+      (`git status` on a big tree) → **gate: HGFS vs SMB**. Light load; say so before running.
 - [ ] **R8** Claude OAuth login over `ssh.exe -t`.
 - [ ] **Verify:** PLAN updated with results; any flipped decision noted in §3 with the reason.
 
@@ -105,23 +102,34 @@ the Windows machine. Each phase ends with a verification step.
 
 - [x] `lease` real liveness + `LockFileEx` lock, and `procjob` Job Object: implemented, and tests
       pass on windows-latest CI. (Optionally re-run locally via interop.)
+- [ ] **`internal/win/vmw`** (replaces `vbox`, which is then deleted): `Locate` (registry
+      `HKLM\SOFTWARE\VMware, Inc.\VMware Workstation` → `InstallPath`/`ProductVersion`, ≥ 17.5);
+      `Runner` over `vmrun -T ws` (start nogui, stop soft/hard, list → state, add/remove/enable
+      shared folders); `.vmx` writer (golden-file test; CRLF; hardening keys; shares section;
+      `ClearShares` for the cold-boot sweep; seed CD-ROM detach); VMnet discovery from
+      `VMnetLib\VMnetConfig\vmnet{1,8}\IPSubnetAddress` (VM IP = subnet `.10`); `vdiskmanager`
+      convert/grow commands. Static VMware MACs in `00:50:56:00:00:00–3F:FF:FF`.
+- [ ] Provisioning for `fclaude_platform=vmware`: site.yml (open-vm-tools task; vboxsf task
+      dropped; git config for any non-`kvm` platform); rename `network-config-vbox.tmpl` →
+      `network-config-win.tmpl`; seed MTU 1500 for VMware; `seed` platform param instead of the
+      hard-coded `virtualbox`; CI ansible syntax-check with `vmware`. **Verify** with a fresh VM.
 - [ ] `internal/win/vmssh`: x/crypto/ssh client, pinned host key, keepalive, stdio session.
-- [ ] `internal/win/share` vboxsf impl (or SMB if R2 failed): share → VM mount → verify; release
-      order from R3; self-heal; rollback.
+- [ ] `internal/win/share` HGFS impl (or SMB if R2 fails): `addSharedFolder` → guest
+      `vmhgfs-fuse` mount → verify; release = guest `umount` (lazy fallback) → `removeSharedFolder`;
+      self-heal (re-add heals a live mount); rollback; cold-boot `ClearShares`.
 - [ ] **Verify:** windows-latest CI green; manual share/mount/release loop ×50 clean.
 
 ## Phase 7 — Installer / uninstaller (W)
 
-- [ ] Interactive setup wizard: steps 0–12 of PLAN §4 (share-root prompt, preflight + winget
-      VirtualBox offer, dirs, guarded disk w/ SHA256 check, keys + ACL, seed, host-only net, VM define,
-      single UAC `install-elevated`, binaries + PATH, config/vm.json, boot+wait w/ progress + host-key
-      pin, optional VS Code settings.json edit + login launch).
+- [ ] Interactive setup wizard: steps 0–11 of PLAN §4 (share-root prompt, preflight incl. VMware
+      Workstation ≥ 17.5 + VMnet subnets, dirs, guarded disk w/ SHA256 check + vdiskmanager convert,
+      keys + ACL, seed, `.vmx`, single UAC `install-elevated`, binaries + PATH, config/vm.json,
+      boot+wait w/ progress + host-key pin + seed detach, optional VS Code settings.json edit +
+      login launch).
 - [ ] Upgrade path: newer setup over existing install → binaries only, never VM/disk.
-- [ ] NAT hardening that survives VBoxSVC restarts (R6: extradata does not work). Every `startvm` path
-      re-asserts the setting and reads back `localhostReachable="0"`, or refuses to start; sessions refuse a running VM that shows `1` (GUI-started).
-      `vbox.State()` retries on `E_ACCESSDENIED` "object is not ready".
-- [ ] `install-elevated` (firewall, VirtualBox via winget) + `uninstall` (typed confirm, detach disk before unregister,
-      separate `DELETE DISK`) + `grow-disk` (offline resize + in-VM grow).
+- [ ] `install-elevated` (firewall rules scoped to both VMnet subnets) + `uninstall` (typed
+      confirm, `vmrun stop`, remove the VM dir except the disk, separate `DELETE DISK`) +
+      `grow-disk` (stop, `vdiskmanager -x`, start, in-VM grow).
 - [ ] Tests: disk guard, config-not-overwritten, uninstall never touches disk without the phrase,
       JSONC settings.json edit (comments/trailing commas preserved, backup written).
 - [ ] **Verify:** fresh install from zero; re-run install (idempotent); restore-from-existing-disk
@@ -148,10 +156,10 @@ the Windows machine. Each phase ends with a verification step.
 
 ## Phase 10 — E2E, docs, wrap-up (W)
 
-- [ ] Firewall matrix from the VM: 22/135/445/3389 on 192.168.56.1 blocked; 8080 test listener
-      reachable; internet OK.
+- [ ] Firewall matrix from the VM: 135/139/445/3389 on the VMnet1 and VMnet8 host addresses
+      blocked; a ≥1024 test listener reachable; NAT gateway still reaches nothing; internet OK.
 - [ ] VM reboot under live sessions → self-heal; Windows reboot → cold-boot lease sweep.
-- [ ] `windows/README.md` (brother quick start: install, login, VS Code setting, known limitations),
+- [ ] `windows/README.md` (brother quick start: **VMware Workstation download via Broadcom**, install, login, VS Code setting, known limitations),
       README + CODEBASE Windows sections (CODEBASE section and README pointer exist; keep them current).
 - [x] `.github/workflows/release-windows.yml` written (Phase 2); first exercised by the tag below.
 - [ ] Cut `v0.1.0-win-experimental`; download it on Windows and install from the release asset.

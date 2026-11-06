@@ -1,6 +1,6 @@
 # fclaude for Windows (experimental) — PLAN
 
-Status: **VirtualBox R1 failed; VMware Workstation spike passed (2026-11-06, §0.7). Awaiting the user decision on switching hypervisor.** v3. Linux-side groundwork is implemented on branch `feat/windows`; the next work happens on
+Status: **Hypervisor switched to VMware Workstation Pro (2026-11-06, §10.6) after VirtualBox failed R1. §3–§4 describe the VMware design; §0.3/§0.7 keep the VirtualBox findings as history.** v3. Linux-side groundwork is implemented on branch `feat/windows`; the next work happens on
 Windows (see §0).** User decisions are in §10. Every decision below has a default. Items marked
 **[R#]** are spikes to run on the Windows machine *before* the code that depends on them. Each one
 has a pass/fail criterion and a fallback, so a failed spike changes a known decision rather than
@@ -14,6 +14,8 @@ You are a **fresh Claude Code session running inside WSL2 (Ubuntu) on the Window
 section is everything the Linux session knew that the code and git history don't say.
 
 ### 0.1 What exists (done on Linux, all lint- and test-clean)
+**Since 2026-11-06 the hypervisor is VMware Workstation (§10.6).** The `internal/win/vbox` package
+and the `virtualbox` platform value below predate that switch; Phase 6 replaces them (TODO).
 - The Go module at the repo root, with the single binary `cmd/fclaude-win`. Its personality comes
   from the exe name: `fclaude`, `fclaude-vscode`, `fclaude-setup`, `fclaude-capture`. **Only
   `--version`/`--help` and `fclaude-capture` work**; the other modes exit 2 with "not
@@ -52,7 +54,7 @@ section is everything the Linux session knew that the code and git history don't
   `eol=lf` plus normalization in `seed`) and an ISO file-handle leak. **Lesson: keep the repo LF;
   if you clone the repo on the Windows side (not in WSL), check `git ls-files --eol`.**
 
-### 0.3 Unverified assumptions to check first on Windows
+### 0.3 VirtualBox assumptions (historical: VirtualBox was dropped in favour of VMware, §10.6)
 These are marked in the code, too. **#1–#3 checked on 2026-11-06** (VirtualBox 7.2.22, Windows 11
 26200, from WSL against a throwaway VM `fclaude-spike` with an empty disk):
 1. **VBoxManage flag spellings** in `vbox.DefineCommands`: **all accepted, and all took effect**
@@ -117,12 +119,12 @@ VirtualBox GUI bypasses (a), so (b), or both, is preferable if R6 shows it works
 
 ### 0.5 Prerequisites (the user preinstalls these before the Windows session)
 Windows side:
-- **Oracle VirtualBox 7.1.x or 7.2.x** (no Extension Pack needed).
+- **VMware Workstation Pro 17.5+** (tested 26.0.1; Broadcom download, free). Its installer creates VMnet1/VMnet8 and enables the Windows Hypervisor Platform.
 - **VS Code** with the **Claude Code extension**, signed in, so the extension's bundled `claude.exe`
   exists for the R4 capture.
 - **Git for Windows**, for repo-on-NTFS tests (CRLF behaviour, R2).
 - **OpenSSH Client** (Settings → Optional features; `ssh -V` in PowerShell should work).
-- **Windows Hypervisor Platform** feature enabled (Turn Windows features on or off; needs admin + reboot). VirtualBox runs on the Hyper-V API while WSL2 is on, and documents this feature as required. Check it in preflight.
+- **Windows Hypervisor Platform** feature enabled (VMware's installer does it; verify in preflight).
 - **Developer Mode on** (Settings → System → For developers), so symlinks can be created without
   admin (R2 npm test).
 - A test folder `C:\dev` (the default share root) with at least one git repo cloned *by Git for
@@ -277,7 +279,7 @@ inside an isolated VM. He works mainly from **VS Code**, and his projects live o
 filesystem (NTFS)**.
 
 In scope:
-- VM in **Oracle VirtualBox** (Ubuntu 24.04, reusing the existing cloud-init and Ansible provisioning).
+- VM in **VMware Workstation Pro** (Ubuntu 24.04, reusing the existing cloud-init and Ansible provisioning).
 - Per-session workspace sharing of NTFS directories into the VM.
 - `fclaude-vscode.exe`: a `claudeCode.claudeProcessWrapper` for the Windows VS Code extension.
 - `fclaude.exe` CLI with parity for the common commands: session, `--status`, `--maintenance`,
@@ -295,73 +297,94 @@ Out of scope for v1 (the "experimental" label):
 
 ```
 VS Code (Windows) ── spawns ──► fclaude-vscode.exe  (Go, native Windows)
-                                   │ 1. ensure VM running        (VBoxManage startvm --type headless)
+                                   │ 1. ensure VM running        (vmrun start <vmx> nogui)
                                    │ 2. acquire workspace lease  (PID-liveness refcount, file lock)
-                                   │ 3. share the workspace dir  (VBoxManage sharedfolder add --transient)
-                                   │ 4. mount it in the VM       (ssh: sudo mount -t vboxsf …)
+                                   │ 3. share the workspace dir  (vmrun addSharedFolder <vmx> fc-<key> <dir>)
+                                   │ 4. mount it in the VM       (ssh: sudo vmhgfs-fuse .host:/fc-<key> …)
                                    │ 5. run claude over SSH      (x/crypto/ssh, stdio)
                                    │    └─ JSON path rewriter    C:\Users\bro\p ⇄ /home/fclaude/p
                                    │ 6. release on exit / reap dead leases on next run
                                    ▼
-VirtualBox VM "fclaude" (Ubuntu 24.04, same site.yml)
-   NIC1 NAT         → internet
-   NIC2 host-only   → 192.168.56.10 (static), host is 192.168.56.1
-   Windows Firewall: inbound from 192.168.56.0/24 → block 1-1023, allow 1024-65535
+VMware VM "fclaude" (%USERPROFILE%\.fclaude\vm\fclaude.vmx; Ubuntu 24.04, same site.yml)
+   NIC1 NAT (VMnet8)       → internet, MTU 1500
+   NIC2 host-only (VMnet1) → <vmnet1 subnet>.10 (static), host is .1
+   Windows Firewall: inbound from both VMnet subnets → block 1-1023, allow 1024-65535
 ```
 
 **WSL is not required by this design.** That choice is deliberate (see §3.2), and it leaves WSL
 free for other uses later. **WSL2 stays installed and enabled on the target machine** (the brother
-needs it), so Hyper-V is always on and VirtualBox always runs on top of the Windows Hypervisor
-Platform ("NEM" mode). That mode is slower than native VT-x. Disabling Hyper-V is **not** an
-option, so [R1] is a viability check, not a tuning step.
+needs it), so Hyper-V is always on, and the hypervisor always runs on top of the Windows
+Hypervisor Platform API. Disabling Hyper-V is **not** an option. R1 showed VirtualBox is not viable
+in that mode and VMware Workstation is (§0.7, §3.1).
 
 ## 3. Key decisions
 
-### 3.1 Hypervisor: VirtualBox 7.1+ (user's choice), driven by `VBoxManage.exe`
+### 3.1 Hypervisor: **VMware Workstation Pro** (17.5+; tested 26.0.1), driven by `vmrun.exe`
 
-- Locate `VBoxManage.exe` via the `VBOX_MSI_INSTALL_PATH` environment variable (set by the
-  installer), then the registry key `HKLM\SOFTWARE\Oracle\VirtualBox\InstallDir`, then the
-  default `C:\Program Files\Oracle\VirtualBox`.
-- Disk image: `ubuntu-24.04-server-cloudimg-amd64.vmdk` (verified to exist on
-  cloud-images.ubuntu.com). Convert it with `VBoxManage clonemedium --format VDI` to
-  `%USERPROFILE%\.fclaude\fclaude-disk.vdi`, then `modifymedium --resize 32768`. The `.img`
-  download is qcow2, which VirtualBox cannot read.
-- The stock `-generic` kernel already ships `vboxsf.ko` and `vboxguest.ko` in
-  `linux-modules-*` (verified on the live VM: `6.8.0-142-generic`). **No Guest Additions install
-  is needed.**
-- CPU: VirtualBox exposes a host-model CPU. The Zen4/AVX-512 problem from Linux was KVM-specific;
-  watch for it in [R1] anyway.
-- Resources default to 8 GiB / 6 vCPU, as on Linux. They are configurable, and the installer
-  checks host RAM and warns if it is under 16 GiB.
+**Switched from VirtualBox on 2026-11-06** (user decision, §10.6). WSL2 stays on, so Hyper-V owns
+AMD-V/VT-x and any third-party hypervisor runs on the Windows Hypervisor Platform API.
+VirtualBox's backend for that ("NEM snail mode") stalls the guest under multi-vCPU load. VMware's
+("Monitor Mode: ULM") passed the identical trial cleanly (§0.7).
 
-### 3.2 Workspace sharing: **VirtualBox transient shared folders (vboxsf)**. SMB is the fallback; NFS via WSL is rejected.
+- **Prerequisite, installed by the user:** VMware Workstation Pro, free for all use since
+  2024-11-11. There is no winget package and the download needs a Broadcom account, so setup
+  cannot install it. It checks for it and prints instructions. The VMware installer enables the
+  Windows Hypervisor Platform feature itself.
+- **Locate:** `HKLM\SOFTWARE\VMware, Inc.\VMware Workstation` → `InstallPath`,
+  `ProductVersion` (readable without admin), falling back to
+  `C:\Program Files\VMware\VMware Workstation`. Tools used: `vmrun.exe` (`-T ws`) and
+  `vmware-vdiskmanager.exe`.
+- **VM definition:** we **write the `.vmx` ourselves** (plain `key = "value"` text, CRLF). The VM
+  is never registered in the Workstation library; `vmrun` addresses it by `.vmx` path. That makes
+  setup idempotent by construction: regenerate the `.vmx`, never edit it in place except for the
+  share keys. Key settings: `virtualHW.version`, `guestOS = "ubuntu-64"`, `firmware = "bios"`,
+  `memsize`, `numvcpus`, SATA disk + SATA CD-ROM (seed ISO), two `vmxnet3` NICs (+ the
+  `pciBridge4..` PCIe root ports they need) with static VMware-range MACs
+  (`00:50:56:00:00:00`–`00:50:56:3F:FF:FF`), `serial0` to a file (boot diagnostics), and hardening
+  (`usb.present`, `sound.present`, `floppy0.present` off; `isolation.tools.{copy,paste,dnd}.disable`
+  on; HGFS left enabled for the shares).
+- **Disk:** download `ubuntu-24.04-server-cloudimg-amd64.vmdk` (it's streamOptimized, which VMware
+  won't boot), then `vmware-vdiskmanager -r <src> -t 0 <dst>` (monolithic sparse) and
+  `-x 32GB <dst>`. Grow later with `-x` while powered off.
+- **Lifecycle:** `vmrun start <vmx> nogui`, `vmrun stop <vmx> soft|hard`, `vmrun list` for state
+  (a running VM lists its `.vmx` path). None of these need admin.
+- Resources default to 8 GiB / 6 vCPU, as on Linux, and are configurable. The guest sees the host
+  CPU model (no AVX-512 is exposed under the Hyper-V API) and uses the `tsc` clocksource.
+
+### 3.2 Workspace sharing: **VMware shared folders (HGFS)**, per workspace, added to the running VM
 
 | Option | Verdict | Why |
 |---|---|---|
-| NFS server in WSL exporting `/mnt/c/...` | **Rejected** | `/mnt/c` is a 9p/drvfs mount. The kernel nfsd cannot export it, so it would need a userspace NFS server (ganesha/unfs3). The I/O path becomes VM → NFS → WSL VM → 9p → NTFS: three hops, two VMs, slow and fragile. It also adds WSL2's NAT and changing IPs to the networking. |
-| SMB (Windows built-in server) + `cifs` in the VM | **Fallback** | Native and fast. But creating a share needs **admin**, so per-session shares are impractical; the realistic setup is one share of the root, which drops per-workspace isolation. It also needs a password-bearing Windows account whose credentials live in the VM. Port 445 is privileged, so it **conflicts with the "block <1024" firewall rule**. |
-| **vboxsf transient shared folders** | **Chosen** | `VBoxManage sharedfolder add <vm> --name X --hostpath D --transient` works **on a running VM without admin**. That gives **true per-session isolation**: the VM only ever sees the open workspace, as on Linux. There are no credentials or network service involved, and it fits the firewall rule cleanly. The kernel module is already in the guest. |
+| NFS server in WSL exporting `/mnt/c/...` | **Rejected** | `/mnt/c` is 9p/drvfs; the kernel nfsd cannot export it. Three hops, two VMs. |
+| SMB (Windows built-in server) + `cifs` | **Fallback** | Creating shares needs admin, 445 is privileged (conflicts with the firewall rule), and it needs Windows credentials in the VM. |
+| **HGFS shared folders** | **Chosen** | `vmrun addSharedFolder <vmx> <name> <dir>` works on a **running VM without admin**, so the VM sees only the open workspaces. The guest's stock open-vm-tools mounts it: `vmhgfs-fuse .host:/<name> <dir> -o allow_other,uid=1000,gid=1000`. No network service, no credentials. |
 
-Known vboxsf risks, all tested in [R2]:
-- Symlinks are disabled by default. npm's `node_modules/.bin` needs them. Fix: the
-  `VBoxInternal2/SharedFoldersEnableSymlinksCreate/<share>` extradata key, plus Windows
-  Developer Mode for unprivileged symlinks. Open question: does extradata apply to *transient*
-  shares added at runtime, or only after a VM restart?
-- Windows refuses to rename or delete a file that another process has open (VS Code, AV,
-  Windows git). The VM can see `EBUSY`/`ETXTBSY` on git lock or rename operations.
-- Small-file performance (`npm install`, `git status` on big trees) is mediocre.
-- Exec bits: everything appears with one mode. We mount with `fmode=0775,dmode=0775`
-  (everything executable). That is harmless with `core.filemode=false`, which Git for Windows
-  already sets in each repo.
+Verified (§0.7): read, write and git work, and writes are immediately visible on Windows.
+`removeSharedFolder` while mounted empties the mount (ENOENT) without hanging, and re-adding the
+same name heals the existing mount.
 
-**Decision gate:** if [R2] shows vboxsf is unusable (git corruption, persistent locking errors,
-broken symlinks), switch the `share` package to the SMB backend. The interface is
-`Share(dir) (vmPath, release)`, so the change stays inside one package.
+- **Shares persist in the `.vmx`** (`sharedFolderN.*`, `expiration = "never"`, active count in
+  `sharedFolder.maxNum`). They are not transient. Consequences: release must remove them, and the
+  **cold-boot sweep** (leases deleted when the VM was off, §3.5) also clears every share from the
+  `.vmx` before `vmrun start`. No share then survives a crash into the next boot.
+- Release order: guest `umount` (lazy fallback) → `vmrun removeSharedFolder`.
+- Share names are derived from the workspace key (`fc-<hash>`). The guest mount point is
+  `/home/fclaude/<rel>`.
+- **Known limitations:** symlink creation fails ("Operation not supported"), so npm's
+  `node_modules/.bin` needs `--no-bin-links` or a VM-local `node_modules` (bind mount). R2 decides
+  which to document. `touch` on a new empty file sets mtime 1970; files written with content are
+  correct. Windows refuses to rename or delete a file another process holds open (to be measured
+  in R2).
+- Exec bits: everything appears with one mode. That is harmless with `core.filemode=false`, which
+  Git for Windows sets.
+
+**Decision gate:** if R2 shows HGFS is unusable for git/npm workloads, switch the `share` package
+to the SMB backend. The interface is `Share(dir) (vmPath, release)`.
 
 ### 3.3 Host tooling: **Go**, cross-compiled to Windows `.exe`
 
 - The original requirements say "if more complexity is needed, I prefer Go". This port needs it:
-  VBoxManage orchestration, Windows process-liveness APIs, a stdio JSON rewriter, ISO generation,
+  vmrun/.vmx orchestration, Windows process-liveness APIs, a stdio JSON rewriter, ISO generation,
   and ACL setup.
 - The wrapper **must be a real `.exe`**. Since the CVE-2024-27980 fix, Node's `spawn()` on
   Windows refuses `.cmd`/`.bat` without `shell: true`, and we cannot control how the extension
@@ -376,9 +399,9 @@ cmd/fclaude-win/main.go                single binary; argv[0] basename selects m
                                          fclaude.exe → CLI, fclaude-vscode.exe → VS Code wrapper
                                          (install copies the same exe under both names)
 internal/win/config/                   %USERPROFILE%\.fclaude\config.json load/validate/defaults
-internal/win/vbox/                     VBoxManage wrapper (state, start, stop, sharedfolder, medium)
+internal/win/vmw/                      VMware front end: Locate, vmrun runner, .vmx writer, VMnet discovery, shares, vdiskmanager
 internal/win/vmssh/                    x/crypto/ssh client (stdio sessions, exec, keepalive)
-internal/win/share/                    Share interface; vboxsf impl (+ smb impl only if [R2] fails)
+internal/win/share/                    Share interface; HGFS impl (+ smb impl only if [R2] fails)
 internal/win/lease/                    PID+creation-time leases, LockFileEx-guarded, reaper
 internal/win/pathmap/                  Windows⇄VM path mapping + streaming JSON rewriter
 internal/win/seed/                     cloud-init NoCloud ISO (label "cidata", Rock Ridge) via diskfs/go-diskfs
@@ -473,45 +496,38 @@ close. Instead:
 
 ### 3.7 Networking and firewall
 
-- **NIC1: NAT**, for internet access. The VM's DNS uses the NAT DNS proxy.
-- **NIC2: host-only** (`VirtualBox Host-Only Ethernet Adapter`, 192.168.56.0/24). The VM gets
-  a static **192.168.56.10** via the cloud-init `network-config` (a second ethernet entry, MTU
-  1400 kept on both). Host-to-VM SSH goes over this link, so no port forwards are needed.
-- **Firewall (requirement: VM must not reach privileged host ports):** one elevated step adds two
-  Windows Defender Firewall rules scoped to `-RemoteAddress 192.168.56.0/24` on the host-only
-  interface. In Windows Firewall, **block beats allow**.
-  ```powershell
-  New-NetFirewallRule -Group "fclaude" -DisplayName "fclaude: block VM -> host privileged TCP" `
-    -Direction Inbound -Action Block -Protocol TCP -LocalPort 1-1023 -RemoteAddress 192.168.56.0/24
-  New-NetFirewallRule -Group "fclaude" -DisplayName "fclaude: block VM -> host privileged UDP" `
-    -Direction Inbound -Action Block -Protocol UDP -LocalPort 1-1023 -RemoteAddress 192.168.56.0/24
-  New-NetFirewallRule -Group "fclaude" -DisplayName "fclaude: allow VM -> host unprivileged" `
-    -Direction Inbound -Action Allow -Protocol TCP -LocalPort 1024-65535 -RemoteAddress 192.168.56.0/24
-  ```
-  The `fclaude` group makes uninstall a single `Remove-NetFirewallRule -Group fclaude`.
-- **NAT side-channel [R6]:** the VM can also reach the host through the NAT gateway `10.0.2.2`.
-  Those packets come from the host's own `VirtualBoxVM.exe`, so Windows Firewall cannot filter
-  them by VM address. Mitigation: set `--nat-localhostreachable1 off` explicitly (default since
-  7.0), then *test* what 10.0.2.2 still reaches (445, 135, an RDP or local web server on 0.0.0.0).
-  If privileged host ports are reachable, the fallback is to block the 10.0.2.2 route in the VM.
-  That is defeatable by root in the VM, so it would be documented as a known weakness of the
-  experimental build. The stronger fallback is an outbound Windows Firewall program rule for
-  `VirtualBoxVM.exe` to local addresses (needs testing; loopback is exempt from WFP rules).
+- **NIC1: NAT** (`ethernet0.connectionType = "nat"`, VMnet8) for internet access. DHCP and DNS
+  come from VMware's NAT service (gateway `.2` of the VMnet8 subnet).
+- **NIC2: host-only** (`"hostonly"`, VMnet1). The VM gets a static `.10` in the VMnet1 subnet via
+  the cloud-init `network-config` (both NICs matched by MAC). VMware's host-only DHCP hands out
+  `.128` and up, so `.10` is safe. Host-to-VM ssh goes over this link.
+- **The subnets are chosen by the VMware installer** (here 192.168.201.0/24 and 192.168.146.0/24).
+  Setup reads them from `HKLM\SOFTWARE\VMware, Inc.\VMnetLib\VMnetConfig\vmnet{1,8}` →
+  `IPSubnetAddress` (no admin) and stores the VM IP in `vm.json`. They are not hard-coded.
+- **MTU 1500 on both NICs.** VMware's NAT is a userspace TCP proxy that ignores the guest's smaller
+  MSS. With MTU 1400, every HTTPS handshake hangs (verified). The seed's `MTU` parameter is
+  therefore per hypervisor (KVM keeps 1400).
+- **Firewall (requirement: VM must not reach privileged host ports):** one elevated step adds the
+  Windows Defender Firewall rules from the previous design, scoped to `-RemoteAddress` of **both**
+  VMnet subnets. Guest traffic to the host's `.1` addresses arrives on these real virtual
+  adapters, so the rules apply. Uninstall: `Remove-NetFirewallRule -Group fclaude`.
+- **NAT side-channel: absent.** From the guest, the NAT gateway reaches no host port at all, and
+  host loopback-only services are unreachable from every address (verified). Unlike VirtualBox's
+  `localhostReachable`, this is not a setting that can silently flip.
 
 ### 3.8 VM provisioning: reuse `site.yml` almost unchanged
 
-- `host_user` is passed as **empty**, so the `/home/<hostuser>` bind-mount tasks skip themselves
-  (they already have `when: host_user | length > 0`). The path mapping is done by the rewriter
-  instead.
-- New, gated on `fclaude_platform == 'virtualbox'` (default `'kvm'`, so Linux is unaffected):
-  - load `vboxsf` at boot (`/etc/modules-load.d/fclaude-vboxsf.conf`);
-  - system gitconfig for repos created on Windows: `core.autocrlf=true` (matches Git for Windows'
-    default; otherwise every CRLF file looks modified to Linux git), `core.checkStat=minimal` and
-    `core.trustctime=false` (stat data from vboxsf differs from NTFS-native git's index);
-  - `/etc/sudoers.d/` is unchanged; fclaude already has NOPASSWD sudo for `mount -t vboxsf`.
-- cloud-init `user-data.tmpl` gains a `-e fclaude_platform=__FCLAUDE_PLATFORM__` variable, which
-  `install.sh` renders as `kvm`. `network-config.tmpl` gets the second NIC from a separate
-  Windows template (`vm/cloud-init/network-config-vbox.tmpl`); the KVM one stays byte-identical.
+- `host_user` is passed as **empty**, so the `/home/<hostuser>` bind-mount tasks skip themselves.
+  The path mapping is done by the rewriter instead.
+- `fclaude_platform` becomes **`vmware`** (was `virtualbox`; Linux stays `kvm`). Gated on it:
+  - ensure `open-vm-tools` is installed (the cloud image ships it; the task makes it explicit) and
+    drop the VirtualBox-only `vboxsf` modules-load task;
+  - the system gitconfig for repos created on Windows (`core.autocrlf=true`,
+    `core.checkStat=minimal`, `core.trustctime=false`). It now applies to any Windows platform
+    (`fclaude_platform != 'kvm'`).
+- cloud-init `user-data.tmpl` keeps `-e fclaude_platform=__FCLAUDE_PLATFORM__`. The two-NIC
+  `network-config-vbox.tmpl` is hypervisor-neutral (MAC-matched) and is renamed to
+  `network-config-win.tmpl`. The KVM `network-config.tmpl` stays byte-identical.
 - The weekly apt timer and staleness stamps (`vm/update/*`) are reused verbatim.
 
 ### 3.9 Path mapping rules (`internal/win/pathmap`)
@@ -554,60 +570,51 @@ Test corpus: the fixtures captured in [R4].
 ## 4. Distribution and install flow
 
 **Distribution (user decision): a prebuilt release.** A GitHub Actions release job on `v*-win*`
-tags builds one binary and attaches it to the GitHub release as **`fclaude-setup.exe`**, plus a
-`SHA256SUMS` file. The brother downloads and double-clicks it, and a console wizard sets up
-everything, VM included. It is the same Go binary: the `fclaude-setup` argv[0] basename (or no
-arguments when launched from Explorer) selects interactive install mode.
-- Unsigned binary: Windows SmartScreen shows "unknown publisher" (More info → Run anyway); the
-  README documents this. Code signing is out of scope for v1.
-- Versioning: `-ldflags "-X main.version=<tag>"`. `fclaude --version` prints it, and re-running a
-  newer setup over an existing install upgrades the binaries only (like `--wrappers-only`). It never
-  reprovisions the VM or touches the disk.
+tags builds one binary and attaches it as **`fclaude-setup.exe`** plus `SHA256SUMS`. The brother
+installs **VMware Workstation Pro first** (README walks through the Broadcom download), then
+downloads and double-clicks `fclaude-setup.exe`. A console wizard sets up everything else. It is
+the same Go binary: the `fclaude-setup` argv[0] basename (or no arguments from Explorer) selects
+interactive install mode.
+- Unsigned binary: SmartScreen shows "unknown publisher" (More info → Run anyway); documented.
+- Versioning: `-ldflags "-X main.version=<tag>"`. Re-running a newer setup over an existing
+  install upgrades the binaries only. It never reprovisions the VM or touches the disk.
 
-Run as a normal user. Only the steps that need admin elevate, through a single UAC prompt
-(`ShellExecute "runas"` on `fclaude.exe install-elevated`): the firewall rules and, if needed, the
-VirtualBox install.
+Run as a normal user. Only the firewall rules need admin: a single UAC prompt (`ShellExecute
+"runas"` on `fclaude.exe install-elevated`).
 
 0. **Ask:** the share root (default `C:\dev`, created if missing after confirmation). Everything
-   else uses defaults (8 GiB / 6 vCPU / 32 GiB), which can be changed later in `config.json`.
-1. **Preflight:** Windows build, OpenSSH client present, host RAM and disk space, `SHARE_ROOT`
-   exists. **VirtualBox:** if `VBoxManage` is missing or older than 7.1, offer to install it with
-   `winget install --id Oracle.VirtualBox -e` (elevated, with consent; reboot hint if the driver
-   asks). Otherwise print the download link and exit. Report the Hyper-V/WSL state (expected on).
-2. **Dirs:** `%USERPROFILE%\.fclaude\{ssh,leases,bin}`.
-3. **Disk (guarded):** if `fclaude-disk.vdi` exists, prompt "is this a restore from backup?".
-   Yes skips the disk step entirely; No exits. Otherwise download the `.vmdk` (verify against
-   `SHA256SUMS`), clone it to VDI, and resize to 32 GiB.
-4. **SSH keys:** ed25519 keypairs for `fclaude` and `maint` (Go `crypto/ed25519` plus
-   `x/crypto/ssh` marshalling), with key ACLs fixed.
-5. **Seed ISO:** render `user-data` (platform=virtualbox, host_user=""), `meta-data`, and
-   `network-config-vbox` from the embedded templates. Write `seed.iso` (label `cidata`).
-6. **Network:** ensure the host-only adapter exists with 192.168.56.1/24
-   (`VBoxManage hostonlyif create/ipconfig`), and disable its DHCP server.
-7. **VM:** `createvm --register` (fixed UUID, as on Linux, so it's idempotent); `modifyvm`
-   (memory, cpus, `--nic1 nat --nat-localhostreachable1 off --nic2 hostonly`, fixed MACs,
-   `--graphicscontroller vmsvga --vram 16`, `--audio-enabled off`, `--usb off`, clipboard and
-   drag-and-drop disabled); storage: SATA vda VDI plus IDE DVD with `seed.iso`.
-8. **Firewall:** the elevated `install-elevated` step (rules in §3.7).
-9. **Binaries:** copy itself to `.fclaude\bin\fclaude.exe` and `fclaude-vscode.exe` (and
-   `.fclaude\bin\fclaude-setup.exe`, so the uninstaller and repairs work offline), and add
-   `.fclaude\bin` to the user PATH (HKCU `Environment`, then broadcast `WM_SETTINGCHANGE`).
-10. **Config + VM info:** `config.json` (never overwritten; a `.new` is written beside it) and
-    `vm.json`.
-11. **Boot and wait:** start headless and wait for `/var/lib/fclaude/.provisioned` over ssh,
-    showing progress (cloud-init + Ansible take several minutes). Pin the host key.
-12. **Finish:** offer to write `claudeCode.claudeProcessWrapper` into VS Code's user
-    `settings.json` (JSONC-aware edit, backup first, only with consent). Otherwise print the line.
-    Then offer to launch the Claude login now (`fclaude --maintenance` → `claude`).
+   else uses defaults (8 GiB / 6 vCPU / 32 GiB), changeable later in `config.json`.
+1. **Preflight:** Windows build, OpenSSH client, host RAM and disk, `SHARE_ROOT` exists.
+   **VMware Workstation ≥ 17.5** found via the registry (else print the download steps and exit).
+   VMnet1 and VMnet8 exist with readable subnets.
+2. **Dirs:** `%USERPROFILE%\.fclaude\{ssh,leases,bin,vm}`.
+3. **Disk (guarded):** if `vm\fclaude-disk.vmdk` exists, prompt "is this a restore from
+   backup?". Yes skips the disk step; No exits. Otherwise download the `.vmdk` (verify against
+   `SHA256SUMS`), convert it with `vmware-vdiskmanager -r … -t 0`, and grow it with `-x 32GB`.
+4. **SSH keys:** ed25519 keypairs for `fclaude` and `maint`, key ACLs fixed (`icacls`).
+5. **Seed ISO:** render `user-data` (platform=vmware, host_user=""), `meta-data`, and
+   `network-config-win` (MACs, VMnet1 `.10`, MTU 1500). Write `vm\seed.iso` (label `cidata`,
+   sector-aligned).
+6. **VM:** write `vm\fclaude.vmx` (§3.1) with no shares.
+7. **Firewall:** the elevated `install-elevated` step (rules scoped to both VMnet subnets, §3.7).
+8. **Binaries:** copy itself to `.fclaude\bin\fclaude.exe`, `fclaude-vscode.exe`,
+   `fclaude-setup.exe`, and add `.fclaude\bin` to the user PATH (HKCU `Environment` +
+   `WM_SETTINGCHANGE`).
+9. **Config + VM info:** `config.json` (never overwritten; `.new` beside it) and `vm.json` (VM
+   IP, subnets, MACs, `.vmx` path).
+10. **Boot and wait:** `vmrun start … nogui`, wait for `/var/lib/fclaude/.provisioned` over ssh
+    with progress (about 6 min). Pin the host key. Then detach the seed ISO (rewrite the `.vmx`
+    CD-ROM entry) so a later boot can't re-seed.
+11. **Finish:** offer to write `claudeCode.claudeProcessWrapper` into VS Code's user
+    `settings.json` (JSONC-aware, backup first, only with consent); then offer the Claude login
+    (`fclaude --maintenance` → `claude`).
 
-`fclaude.exe uninstall`: typed-phrase confirmation; power off; **detach the disk first**, then
-`unregistervm` (without `--delete`, which would delete attached media); remove the firewall group,
-the PATH entry, and binaries; a separate typed `DELETE DISK` prompt at the end. This mirrors
-`uninstall.sh`.
+`fclaude.exe uninstall`: typed-phrase confirmation; `vmrun stop`; remove the `.vmx` and the VM
+directory **except the disk**; remove the firewall group, PATH entry and binaries; a separate
+typed `DELETE DISK` prompt at the end. Mirrors `uninstall.sh`.
 
-`fclaude.exe grow-disk 64G`: VDI resize needs the VM powered off, so it confirms, shuts down,
-runs `modifymedium --resize`, starts the VM, then runs `growpart` and `resize2fs` over ssh. This
-differs from Linux's online grow, and is documented.
+`fclaude.exe grow-disk 64G`: confirm, stop the VM, `vmware-vdiskmanager -x`, start, then
+`growpart` + `resize2fs` over ssh.
 
 ## 5. VS Code setup (brother's side)
 
@@ -623,19 +630,19 @@ Workspaces must be under `SHARE_ROOT`. Otherwise the wrapper prints a clear erro
 
 | ID | Question | How | Pass → | Fail → |
 |---|---|---|---|---|
-| R1 | Is VirtualBox on Hyper-V (NEM; WSL2 stays on) viable? | Install VBox 7.1.x, boot the Ubuntu vmdk headless. Time the boot and `stress-ng`/`npm ci` on a sample repo; check `dmesg` for MCEs/segfaults over 30 min; run WSL at the same time. | VirtualBox | Hyper-V must stay on, so the fallback is a **Hyper-V backend** (Windows Pro; `New-VM` via PowerShell) behind the same `vbox`-style interface. That would be a plan change, raised with the user. |
-| R2 | Is vboxsf good enough? | Transient share on a running VM; in the VM: `git clone` + `git status` + commit, `npm ci` (symlinks), file rename while VS Code has the file open, create a file in the VM and open it in VS Code at once, a 1 GB file, case-only rename, `fsync`-heavy `sqlite3`. Also: does the per-share `SharedFoldersEnableSymlinksCreate` extradata work for transient shares without a VM restart? | vboxsf | SMB backend (§3.2), with a firewall exception for 445 from 192.168.56.10 only, and accept root-share scope |
-| R3 | Do transient share add/remove work reliably while mounted, and what does the VM see after `remove` with the mount still up? | Script add → mount → remove-with-mount → remount loops. | Order: VM `umount` (lazy fallback) → `sharedfolder remove` | Add `--cleanup` heuristics |
+| R1 | Is a hypervisor viable next to WSL2 (Hyper-V on)? | Boot headless; 6-vCPU `stress-ng --cpu --vm --verify` while polling ssh; check `dmesg`. | **VirtualBox: FAILED. VMware Workstation: PASSED** (§0.7) | — |
+| R2 | Is HGFS good enough? | Share on a running VM; in the VM: `git clone` + `git status` + commit, `npm ci` (symlinks: expected to fail, so test `--no-bin-links` and a VM-local `node_modules`), rename while VS Code has the file open, create in the VM and open in VS Code at once, a 1 GB file, case-only rename, `fsync`-heavy `sqlite3`, and small-file performance (`git status` on a big tree). | HGFS | SMB backend (§3.2) |
+| R3 | Do share add/remove work reliably while mounted? | add → mount → remove-with-mount → re-add loops. | **Done (VMware):** remove empties the mount, re-add heals it. Order: guest `umount` → `removeSharedFolder` | — |
 | R4 | How does the Windows extension call the wrapper, and what path forms appear? | Native pass-through capture build (see below): log argv/env/cwd/stdio, run the bundled `claude.exe` natively. Exercise: chat, @-mention a file, selection context, Edit/Write diff accept and reject, open file links, a second workspace folder (multi-root; the extension has no `/add-dir`) and an absolute path outside the workspace, plan mode, interrupt, close tab. Confirm that `.exe` is required (try a `.cmd` once). | Paths in well-defined fields → build Option A | Option B (Remote-SSH) |
 | R5 | Does Option A make diffs and file links work end to end? | After building the rewriter: the same scenario list as R4, checked by hand. | Ship A | B, or A with known gaps listed |
-| R6 | What can the VM reach via NAT `10.0.2.2`? | From the VM: `nc -zv 10.0.2.2` on 135/139/445/3389/80 and a test listener on 0.0.0.0:8080 and 127.0.0.1:8081. | Document | §3.7 fallback |
+| R6 | What can the VM reach on the host through NAT? | TCP probes from the VM to the NAT gateway and the host addresses on real loopback-only and all-interface services. | **Done.** VirtualBox: depends on a flaky setting. **VMware: the NAT gateway reaches nothing** (§0.7) | — |
 | R7 | Does the extension time out while the wrapper cold-boots the VM (~30 s)? | Shut the VM off, open the Claude panel. | Fine | Print progress to stderr; optionally autostart the VM at logon (a Task Scheduler entry `fclaude.exe --start`) |
 | R8 | Does the Claude login (OAuth paste flow) work over `ssh.exe -t` in Windows Terminal? | `fclaude --maintenance`, then `claude`. | — | Log in via `fclaude --no-mount` |
 
 **R4 method (revised): native pass-through capture on Windows, day one.** The extension calls
 the wrapper as `wrapper <bundled claude.exe> <flags…>`. `fclaude-capture.exe` (the same binary, renamed; **already implemented**, see
 `internal/win/capture`) logs argv, env, cwd, and both stdio streams,
-then **runs that bundled `claude.exe` natively on Windows**. It needs no VM, no VirtualBox, and no
+then **runs that bundled `claude.exe` natively on Windows**. It needs no VM, no hypervisor, and no
 fclaude infrastructure, so it can run before anything else is built. The result is the ground
 truth: exactly what a *native* Windows claude emits and receives. That is the target the
 rewriter's VM→Windows output must reproduce, and the extension→claude input it must translate.
@@ -648,7 +655,7 @@ rewriter walks every string, so it doesn't need a field inventory up front.
 
 Code that can be written and unit-tested **on Linux, before the reboot**: `pathmap` (table tests
 for the path forms in §3.9, written from first principles and later validated against the Windows
-fixtures), `lease` (with the liveness check abstracted), `config`, `seed`, and the VBoxManage
+fixtures), `lease` (with the liveness check abstracted), `config`, `seed`, and the hypervisor
 argument builders.
 
 ## 7. Testing and CI
@@ -663,9 +670,9 @@ argument builders.
   - `lease`: acquire, release, reap, PID reuse (same PID, different creation time), cold-boot
     sweep, and concurrent acquire. Liveness is behind an interface on Linux; the real
     implementation is tested on `windows-latest`.
-  - `vbox`: argument construction and `--machinereadable` parsing against captured fixtures.
-    `VBoxManage` is behind an `exec` interface.
-  - `share`: mount and unmount orchestration with fake vbox and ssh, including rollback on a
+  - `vmw`: `.vmx` rendering (golden file), `vmrun` argument construction and `list` parsing,
+    VMnet discovery against fake registry values. `vmrun` is behind an `exec` interface.
+  - `share`: mount and unmount orchestration with fake vmw and ssh, including rollback on a
     failed VM mount and the self-heal case (a lease is live but the mount is missing).
   - `seed`: the ISO round-trip (write, then read back with iso9660, checking label `cidata`).
   - `install`: the disk guard (existing disk with restore=no means no changes) and
@@ -677,7 +684,7 @@ argument builders.
 - **CI:** a new `go` job on `ubuntu-latest` (lint, test, `GOOS=windows` build), plus a
   `windows-latest` job (`go test ./internal/win/lease/... ./internal/win/procjob/...` against the
   real Win32 APIs). The existing shellcheck and ansible jobs keep running; the ansible
-  syntax-check also runs with `-e fclaude_platform=virtualbox`.
+  syntax-check also runs with `-e fclaude_platform=vmware`.
 - **Manual end-to-end on Windows** (checklist in the TODO): install, the CLI session, the VS Code
   session, two concurrent sessions on the same dir, killing VS Code then the reaper releasing the
   share, VM reboot, the firewall matrix, and uninstall keeping the disk.
@@ -688,11 +695,11 @@ New:
 - `go.mod`, `go.sum`, `.golangci.yml`
 - `cmd/fclaude-win/main.go`, `internal/win/**` (see §3.3)
 - `vm/assets.go` (go:embed)
-- `vm/cloud-init/network-config-vbox.tmpl`
+- `vm/cloud-init/network-config-win.tmpl` (two NICs by MAC; was `network-config-vbox.tmpl`)
 - `windows/README.md` (the brother-facing quick start), and `.plans/windows-TODO.md`
 
 Modified (Linux behavior unchanged):
-- `vm/ansible/site.yml`: tasks gated on `fclaude_platform == 'virtualbox'` (vboxsf module, git
+- `vm/ansible/site.yml`: tasks gated on `fclaude_platform` (`vmware`: open-vm-tools; any Windows platform: git
   config).
 - `vm/cloud-init/user-data.tmpl`: an `-e fclaude_platform=__FCLAUDE_PLATFORM__` argument.
 - `install.sh`: renders `__FCLAUDE_PLATFORM__` as `kvm` (one `RENDER_VARS` entry).
@@ -703,12 +710,16 @@ Modified (Linux behavior unchanged):
 
 ## 9. Trade-offs and known limitations (experimental)
 
-- **Isolation.** It is still a full VM with its own kernel, so the main property holds. It is
-  weaker than Linux in one way: the NAT `10.0.2.2` path cannot be filtered per-VM by Windows
-  Firewall ([R6]).
-- **Performance.** vboxsf is slower than NFS for many small files, and VirtualBox on Hyper-V is
-  slower than native VT-x. That is acceptable for an agent workload; heavy `npm install` will be
-  noticeably slower.
+- **Isolation.** It is still a full VM with its own kernel, so the main property holds. VMware's
+  NAT exposes no host port (R6), and the host-only/NAT host addresses are covered by the firewall
+  rules.
+- **Proprietary dependency.** VMware Workstation is closed source, needs a Broadcom account to
+  download, and its free licence is a vendor decision that could change. The `vmw` package is
+  the only hypervisor-specific code (plus HGFS in `share`), so a later swap stays contained.
+- **Performance.** HGFS is slower than NFS for many small files, and any hypervisor on the Hyper-V
+  API is slower than native VT-x. That is acceptable for an agent workload; heavy `npm install`
+  will be noticeably slower (measured in R2).
+- **No symlinks on shares** (HGFS). `node_modules/.bin` needs a workaround (R2).
 - **Protocol coupling (Option A).** An extension update could add a path field the rewriter
   doesn't know about. It degrades gracefully (that one link or diff fails), and the capture mode
   stays in the binary (`fclaude-capture.exe`) so new fixtures are cheap to record.
@@ -717,17 +728,19 @@ Modified (Linux behavior unchanged):
   Windows git in VS Code) own commits.
 - **One share root** in v1, set in `config.json` (e.g. `C:\dev`; any drive). Adding a list of roots is straightforward later (the mapper becomes a
   list).
-- **Disk grow needs a VM restart** (a VDI limitation).
+- **Disk grow needs a VM restart** (`vmware-vdiskmanager -x` works offline only).
 
 ## 10. Decisions (from user review, 2026-11-06)
 
 1. **Option A** (path-rewriting wrapper) is chosen. The rewriter is dialed in with experiments on
    Windows (R4/R5). Remote-SSH (B) is only an emergency fallback.
 2. **WSL2 is required on the target and stays enabled.** fclaude doesn't depend on it, which keeps
-   it free for future use. As a result VirtualBox always runs on Hyper-V (NEM); R1 checks
-   viability.
+   it free for future use. As a result the hypervisor always runs on the Hyper-V API; R1 checked
+   viability (→ decision 6).
 3. **SHARE_ROOT is configurable** (`config.json`), asked at install, default `C:\dev`.
 4. **VM defaults 8 GiB / 6 vCPU / 32 GiB** are fine.
 5. **Prebuilt release:** `fclaude-setup.exe` on GitHub releases, a self-contained installer that
-   sets up VirtualBox (via winget if missing), the VM, the firewall, the binaries and, optionally,
-   the VS Code setting.
+   sets up the VM, the firewall, the binaries and, optionally, the VS Code setting. (VMware
+   Workstation itself is installed by the user first; see decision 6.)
+6. **Hypervisor: VMware Workstation Pro** (2026-11-06, after R1). VirtualBox stalls under load
+   on the Hyper-V API; VMware passed. The user installs VMware before setup.
