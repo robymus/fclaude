@@ -73,18 +73,21 @@ the Windows machine. Each phase ends with a verification step.
       drive-case only, 1 `partial_json` fragment left for R5). Fix: Mapper keeps the root's drive
       case + `RootSpelling(root, cwd)`. Queued for Phase 9: `auth status` skips the mount;
       forward `CLAUDE_*` env; `partial_json` decision.
-- [ ] **R1** VirtualBox on Hyper-V (WSL2 on, running concurrently): boot, 30-min stability, perf →
-      record in PLAN. **Gate:** if not viable, stop and raise the Hyper-V-backend alternative with user.
-      **Status (2026-11-06):** provisioning OK (396 s), no AVX-512 in the guest, idle-stable. **Under
-      full load with 6 vCPUs the guest wedges** (RCU stalls, no ssh for 150 s+; reproducible), and one
-      intermittent first-boot initramfs livelock. VBox.log: NEM "snail mode", VirtualBox-emulated
-      APIC (no x2APIC). The **Windows Hypervisor Platform feature was OFF**; the user is enabling it
-      and rebooting. **Pre-reboot trials:** default(kvm) 15/15 ssh misses (wedged); `--paravirt-provider
-      none` 6/15 misses + 2 kernel warnings; **`hyperv` 0/15 misses, max 509 ms** (final dmesg/stress
-      read came back empty, so confirm). **Next:** re-run `r1-load.sh` trials (6 vCPU baseline, then paravirt
-      none/hyperv, 4 and 2 vCPUs). The harness is in the session scratchpad; recreate it from the
-      PLAN if it's gone. If it's still unstable: candidates are VMware Workstation (Home OK) or Hyper-V
-      direct (Pro only; this machine is **Home**). Ask the user for the brother's Windows edition.
+- [!] **R1 — FAILED; Windows port ON HOLD (2026-11-06, user decision).** VirtualBox 7.2.22 on the
+      Hyper-V API (NEM "snail mode", WSL2 on) is not viable on this host (Win 11 Home, Ryzen 7840HS):
+      under full 6-vCPU load the guest stalls for seconds to minutes (RCU stalls, ssh unreachable;
+      a 90 s stress run takes 160 s+). Idle use and provisioning (396 s) work; memory `--verify`
+      always passed (no corruption); no AVX-512 is exposed. Load trials (`hack/r1/r1-load.sh`, 15 ssh
+      polls under load): feature off + kvm paravirt 15/15 missed; feature off + none 6/15; feature
+      off + hyperv 0/15 once (not reproduced); **Windows Hypervisor Platform on** + default 6/15 (20
+      warnings), + hyperv 7/15. Guest clocksource fell back to `acpi_pm`. Plus one intermittent
+      first-boot initramfs livelock.
+      **Untested knobs, if resumed:** fewer vCPUs (2/4) with hyperv paravirt; `--x86-x2apic off`;
+      guest `clocksource=tsc tsc=reliable`.
+      **Alternatives** (PLAN §0.7 R1): drop the WSL2 requirement so VirtualBox gets AMD-V natively
+      (user to check conditions); VMware Workstation on the Hyper-V API (works on Home, untested);
+      Hyper-V direct (Pro only); or the brother runs Linux natively and uses the existing KVM
+      fclaude. Everything from R4/R6/§0.3 stays valid for any VirtualBox-native outcome.
 - [x] **R6** NAT `10.0.2.2` matrix (PLAN §0.7): with `0` nothing is reachable; with `1` the host's
       loopback services plus 135/445 are reachable, and the extradata fix fails. Decision:
       re-assert + read back before every start, and refuse sessions on a running VM showing `1`.

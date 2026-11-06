@@ -1,6 +1,6 @@
 # fclaude for Windows (experimental) — PLAN
 
-Status: **v3. Linux-side groundwork is implemented on branch `feat/windows`; the next work happens on
+Status: **ON HOLD after R1 failed (2026-11-06; see §0.7).** v3. Linux-side groundwork is implemented on branch `feat/windows`; the next work happens on
 Windows (see §0).** User decisions are in §10. Every decision below has a default. Items marked
 **[R#]** are spikes to run on the Windows machine *before* the code that depends on them. Each one
 has a pass/fail criterion and a fallback, so a failed spike changes a known decision rather than
@@ -202,6 +202,11 @@ VirtualBox 7.2.22, VS Code + Claude Code extension 2.1.318.
   `CLAUDE_CODE_SDK_READS_*`, `CLAUDE_CODE_EMIT_*` and others. ssh does not forward them, and
   neither wrapper does so today. Phase 9: forward an allowlist of `CLAUDE_*` vars (`env K=V` on
   the remote command, since sshd has no `AcceptEnv`).
+
+**R1 (VirtualBox on Hyper-V), FAILED; the port is on hold.** Details and trial matrix in the TODO
+(Phase 5, R1). The decision gate in §6 applies: VirtualBox-with-WSL2-on is not viable here. The user
+is re-checking whether the WSL2 requirement (§10.2) can be dropped. Without Hyper-V, VirtualBox
+uses AMD-V directly, which is its mature path, and the rest of this design is unchanged.
 
 **R6 (NAT `10.0.2.2` reachability), done.** Probed from the provisioned VM via TCP connect. The
 targets were real host services: loopback-only `127.0.0.1:1042` and `:9080`; all-interface 135,
