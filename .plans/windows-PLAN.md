@@ -122,6 +122,7 @@ Windows side:
   exists for the R4 capture.
 - **Git for Windows**, for repo-on-NTFS tests (CRLF behaviour, R2).
 - **OpenSSH Client** (Settings → Optional features; `ssh -V` in PowerShell should work).
+- **Windows Hypervisor Platform** feature enabled (Turn Windows features on or off; needs admin + reboot). VirtualBox runs on the Hyper-V API while WSL2 is on, and documents this feature as required. Check it in preflight.
 - **Developer Mode on** (Settings → System → For developers), so symlinks can be created without
   admin (R2 npm test).
 - A test folder `C:\dev` (the default share root) with at least one git repo cloned *by Git for
@@ -201,6 +202,25 @@ VirtualBox 7.2.22, VS Code + Claude Code extension 2.1.318.
   `CLAUDE_CODE_SDK_READS_*`, `CLAUDE_CODE_EMIT_*` and others. ssh does not forward them, and
   neither wrapper does so today. Phase 9: forward an allowlist of `CLAUDE_*` vars (`env K=V` on
   the remote command, since sshd has no `AcceptEnv`).
+
+**R6 (NAT `10.0.2.2` reachability), done.** Probed from the provisioned VM via TCP connect. The
+targets were real host services: loopback-only `127.0.0.1:1042` and `:9080`; all-interface 135,
+445, 5040, 9012; 139 on 192.168.56.1.
+- `localhostReachable=0`: **nothing** is reachable via `10.0.2.2`, not even the all-interface
+  listeners. The NAT side-channel is fully closed.
+- `localhostReachable=1` (the state the VBoxSVC bug in §0.3 silently produces): the guest reaches
+  **135, 445, 5040, 9012 and the loopback-only 1042/9080**. The connections come from the VBox
+  process, so Windows Firewall cannot filter them. That is a full bypass of the privileged-port
+  rule.
+- Fix (b), the NAT-driver extradata `LocalhostReachable=0`, **does not work**. VBox.log shows the
+  key is added, then the NAT setting's own value is applied after it and wins.
+- **Decision:** fix (a). (1) Every `startvm` path re-asserts `--nat-localhostreachable1 off` and
+  reads back `localhostReachable="0"` immediately before starting, and refuses to start
+  otherwise. (2) Every session start checks the *running* VM's value. If it is `1` (for example,
+  started from the VirtualBox GUI), refuse with a message to run `fclaude --shutdown` and retry.
+  The guest-side route block stays a documented non-fix (root in the VM can undo it).
+- Host-only side without firewall rules (the expected pre-install state): 135, 139, 445, 9012
+  open. The §3.7 rules are verified in Phase 10.
 
 **Installer-relevant VirtualBox findings** (fixed in code, or queued in the TODO):
 - Seed ISO not a whole number of 2048-byte sectors → VirtualBox refused it as a DVD (qemu doesn't

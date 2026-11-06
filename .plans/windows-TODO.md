@@ -75,8 +75,17 @@ the Windows machine. Each phase ends with a verification step.
       forward `CLAUDE_*` env; `partial_json` decision.
 - [ ] **R1** VirtualBox on Hyper-V (WSL2 on, running concurrently): boot, 30-min stability, perf →
       record in PLAN. **Gate:** if not viable, stop and raise the Hyper-V-backend alternative with user.
-- [ ] **R6** NAT `10.0.2.2` reachability matrix → record; pick §3.7 fallback if needed. Run it
-      with `localhostReachable` both 0 and 1 (see the PLAN §0.3 bug), and test the extradata fix.
+      **Status (2026-11-06):** provisioning OK (396 s), no AVX-512 in the guest, idle-stable. **Under
+      full load with 6 vCPUs the guest wedges** (RCU stalls, no ssh for 150 s+; reproducible), and one
+      intermittent first-boot initramfs livelock. VBox.log: NEM "snail mode", VirtualBox-emulated
+      APIC (no x2APIC). The **Windows Hypervisor Platform feature was OFF**; the user is enabling it
+      and rebooting. **Next:** re-run `r1-load.sh` trials (6 vCPU baseline, then paravirt
+      none/hyperv, 4 and 2 vCPUs). The harness is in the session scratchpad; recreate it from the
+      PLAN if it's gone. If it's still unstable: candidates are VMware Workstation (Home OK) or Hyper-V
+      direct (Pro only; this machine is **Home**). Ask the user for the brother's Windows edition.
+- [x] **R6** NAT `10.0.2.2` matrix (PLAN §0.7): with `0` nothing is reachable; with `1` the host's
+      loopback services plus 135/445 are reachable, and the extradata fix fails. Decision:
+      re-assert + read back before every start, and refuse sessions on a running VM showing `1`.
 - [ ] **R2** vboxsf test matrix (git, npm symlinks, locked-file rename, VS Code open-after-create,
       big file, case rename, sqlite fsync, transient-share symlink extradata) → **gate: vboxsf vs SMB**.
 - [ ] **R3** transient share add/remove-while-mounted behaviour → fix the release ordering.
@@ -99,8 +108,8 @@ the Windows machine. Each phase ends with a verification step.
       single UAC `install-elevated`, binaries + PATH, config/vm.json, boot+wait w/ progress + host-key
       pin, optional VS Code settings.json edit + login launch).
 - [ ] Upgrade path: newer setup over existing install → binaries only, never VM/disk.
-- [ ] NAT hardening that survives VBoxSVC restarts (fix chosen in R6). Every `startvm` path
-      re-asserts the setting and reads back `localhostReachable="0"`, or refuses to start.
+- [ ] NAT hardening that survives VBoxSVC restarts (R6: extradata does not work). Every `startvm` path
+      re-asserts the setting and reads back `localhostReachable="0"`, or refuses to start; sessions refuse a running VM that shows `1` (GUI-started).
       `vbox.State()` retries on `E_ACCESSDENIED` "object is not ready".
 - [ ] `install-elevated` (firewall, VirtualBox via winget) + `uninstall` (typed confirm, detach disk before unregister,
       separate `DELETE DISK`) + `grow-disk` (offline resize + in-VM grow).
