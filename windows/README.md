@@ -66,7 +66,7 @@ Other commands (`fclaude --help` lists them all):
 - **Restoring the VM disk** needs the `ssh` folder and `vm.json` from the same installation. A
   plain `fclaude uninstall` keeps them. When backing up, copy the whole
   `%USERPROFILE%\.fclaude` folder.
-- The first Claude start after the PC boots waits for the VM (about 30 s).
+- The first Claude start after the PC boots waits while the VM starts.
 
 ## Where things are
 
