@@ -88,6 +88,10 @@ the Windows machine. Each phase ends with a verification step.
       (user to check conditions); VMware Workstation on the Hyper-V API (works on Home, untested);
       Hyper-V direct (Pro only); or the brother runs Linux natively and uses the existing KVM
       fclaude. Everything from R4/R6/§0.3 stays valid for any VirtualBox-native outcome.
+- [x] **R1-VMware spike:** VMware Workstation Pro 26.0.1 passes the identical load trial (0/15
+      misses, 0 warnings). Live HGFS shares need no admin and self-heal on re-add; the NAT reaches
+      nothing on the host. Needs MTU 1500. No symlinks. Details in PLAN §0.7. **Decision (user):**
+      switch the Windows port to VMware? If yes: re-plan Phases 6–7 around `vmrun` + `.vmx` + HGFS.
 - [x] **R6** NAT `10.0.2.2` matrix (PLAN §0.7): with `0` nothing is reachable; with `1` the host's
       loopback services plus 135/445 are reachable, and the extradata fix fails. Decision:
       re-assert + read back before every start, and refuse sessions on a running VM showing `1`.

@@ -1,6 +1,6 @@
 # fclaude for Windows (experimental) — PLAN
 
-Status: **ON HOLD after R1 failed (2026-11-06; see §0.7).** v3. Linux-side groundwork is implemented on branch `feat/windows`; the next work happens on
+Status: **VirtualBox R1 failed; VMware Workstation spike passed (2026-11-06, §0.7). Awaiting the user decision on switching hypervisor.** v3. Linux-side groundwork is implemented on branch `feat/windows`; the next work happens on
 Windows (see §0).** User decisions are in §10. Every decision below has a default. Items marked
 **[R#]** are spikes to run on the Windows machine *before* the code that depends on them. Each one
 has a pass/fail criterion and a fallback, so a failed spike changes a known decision rather than
@@ -207,6 +207,39 @@ VirtualBox 7.2.22, VS Code + Claude Code extension 2.1.318.
 (Phase 5, R1). The decision gate in §6 applies: VirtualBox-with-WSL2-on is not viable here. The user
 is re-checking whether the WSL2 requirement (§10.2) can be dropped. Without Hyper-V, VirtualBox
 uses AMD-V directly, which is its mature path, and the rest of this design is unchanged.
+
+**R1-VMware spike (2026-11-06): VMware Workstation Pro 26.0.1 PASSES where VirtualBox failed.**
+It runs on the same Hyper-V API with WSL2 on ("Monitor Mode: ULM"). VM from a hand-written `.vmx`
+(text, very scriptable), disk via `vmware-vdiskmanager -r <cloud.vmdk> -t 0` + `-x 32GB`, our own
+seed ISO, `vmxnet3` NICs on NAT (vmnet8, 192.168.146.0/24) + host-only (vmnet1, 192.168.201.0/24),
+VMware-range static MACs. Driven by `vmrun -T ws` without admin.
+- **Stability:** the identical 6-vCPU full-load trial gives **0/15 ssh misses, max 610 ms, the 90 s
+  stress run in 90.55 s, 0 kernel warnings**, and memory verify OK. VirtualBox gave 6–15 misses and
+  160 s+. The guest clocksource stays `tsc` (VirtualBox fell to `acpi_pm`). No initramfs hang.
+  Provisioned with `ok=23 failed=0`. ssh works from Windows and from WSL.
+- **MTU:** VMware's NAT (a userspace proxy) ignores the guest's smaller MSS. **With guest MTU
+  1400, every HTTPS handshake hangs**; with 1500, all fine. The seed MTU must be per-hypervisor
+  (1500 on VMware). The 1400 came from the Linux host's tunnel case.
+- **Shared folders:** `vmrun enableSharedFolders` + `addSharedFolder <vmx> <name> <dir>` on a
+  **running VM, no admin**. The guest mounts with stock open-vm-tools (`vmhgfs-fuse
+  .host:/<name> <dir> -o allow_other,uid=1000,gid=1000`). Read, write, git and Windows visibility
+  all OK. **Symlinks: "Operation not supported"** (same risk as vboxsf; npm `.bin` needs
+  `--no-bin-links` or a VM-local `node_modules`). Quirk: `touch` of a new empty file gives mtime
+  1970 (`utimensat` UTIME_NOW); files written with content, and explicit times, are correct.
+- **Release while mounted (R3):** `removeSharedFolder` with the mount up makes the mount empty
+  (ENOENT), with no hang. **Re-adding the same name heals the existing mount** with no remount.
+  `umount` is clean.
+- **NAT side-channel (R6):** the NAT gateway `.146.2` reaches **nothing**, and host loopback-only
+  services are unreachable from every address. This is by design, not a fragile setting as in
+  VirtualBox. The host's vmnet8/vmnet1 addresses expose 135/139/445/9012 pre-firewall; those
+  arrive on real adapters, so the §3.7 rules (scoped to both subnets) apply.
+- **Costs:** no winget package. The download needs a Broadcom account, so setup cannot install it
+  for the brother; he installs it first. It's free for commercial and personal use since
+  2024-11-11.
+- **Implication if adopted:** `vbox` becomes a `hv` interface with a VMware implementation (vmx
+  writer, vmrun runner); `share` uses HGFS instead of vboxsf; the rest (`seed`, `pathmap`, `lease`,
+  `procjob`, wrapper design) is unchanged. Host-only subnet is assigned by VMware (read it from
+  the adapter or `vmnetlib`), not fixed at 192.168.56.0/24.
 
 **R6 (NAT `10.0.2.2` reachability), done.** Probed from the provisioned VM via TCP connect. The
 targets were real host services: loopback-only `127.0.0.1:1042` and `:9080`; all-interface 135,
