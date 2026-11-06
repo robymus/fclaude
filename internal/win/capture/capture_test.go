@@ -61,7 +61,7 @@ func TestRunRecordsEverything(t *testing.T) {
 	t.Setenv("MY_API_KEY", "sk-should-not-leak")
 	var stdout, stderr, log bytes.Buffer
 	code, err := Run(Options{
-		Command: os.Args[0],
+		Command: testExe(t),
 		Args:    []string{"-test.run=^$", "--flag", `C:\dev\x`},
 		Wrapper: []string{"fclaude-capture.exe", "claude.exe"},
 		Stdin:   strings.NewReader("{\"a\":1}\nhello\n"),
@@ -74,7 +74,7 @@ func TestRunRecordsEverything(t *testing.T) {
 		t.Fatalf("passthrough broken: out=%q err=%q", stdout.String(), stderr.String())
 	}
 	recs := parseLog(t, log.Bytes())
-	if recs[0].K != "meta" || recs[0].Meta["command"] != os.Args[0] {
+	if recs[0].K != "meta" || recs[0].Meta["command"] != testExe(t) {
 		t.Fatalf("first record not meta: %+v", recs[0])
 	}
 	if !strings.Contains(log.String(), `C:\\dev\\x`) {
@@ -134,4 +134,16 @@ func TestRedactEnv(t *testing.T) {
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("got %q", got)
 	}
+}
+
+// testExe is this test binary's absolute path. os.Args[0] can be a bare
+// relative name (e.g. when launched through WSL interop), which os/exec
+// refuses to run.
+func testExe(t *testing.T) string {
+	t.Helper()
+	p, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
 }

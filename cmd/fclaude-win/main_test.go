@@ -59,7 +59,7 @@ func TestCapture(t *testing.T) {
 	t.Setenv("FCLAUDE_CAPTURE_DIR", dir)
 	t.Setenv("FCW_HELPER", "claude")
 	var out, errb bytes.Buffer
-	code := run([]string{"fclaude-capture.exe", os.Args[0], "-test.run=^$"}, strings.NewReader(""), &out, &errb)
+	code := run([]string{"fclaude-capture.exe", testExe(t), "-test.run=^$"}, strings.NewReader(""), &out, &errb)
 	if code != 0 || out.String() != "native claude ran\n" {
 		t.Fatalf("code=%d out=%q err=%q", code, out.String(), errb.String())
 	}
@@ -86,7 +86,19 @@ func TestCaptureUnloggableStillRuns(t *testing.T) {
 	t.Setenv("FCLAUDE_CAPTURE_DIR", filepath.Join(file, "sub")) // MkdirAll fails
 	t.Setenv("FCW_HELPER", "claude")
 	var out bytes.Buffer
-	if code := run([]string{"fclaude-capture.exe", os.Args[0], "-test.run=^$"}, strings.NewReader(""), &out, &bytes.Buffer{}); code != 0 || out.Len() == 0 {
+	if code := run([]string{"fclaude-capture.exe", testExe(t), "-test.run=^$"}, strings.NewReader(""), &out, &bytes.Buffer{}); code != 0 || out.Len() == 0 {
 		t.Fatalf("session broken by logging failure: %d", code)
 	}
+}
+
+// testExe is this test binary's absolute path. os.Args[0] can be a bare
+// relative name (e.g. when launched through WSL interop), which os/exec
+// refuses to run.
+func testExe(t *testing.T) string {
+	t.Helper()
+	p, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
 }

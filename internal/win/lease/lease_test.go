@@ -176,7 +176,7 @@ func TestRealLiveness(t *testing.T) {
 	if !alive(self) {
 		t.Fatal("own process reported dead")
 	}
-	cmd := exec.Command(os.Args[0], "-test.run=^$")
+	cmd := exec.Command(testExe(t), "-test.run=^$")
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -264,4 +264,16 @@ func TestListIgnoresStrayFilesAndCorruptRecord(t *testing.T) {
 	if _, err := s.List(); err == nil {
 		t.Fatal("corrupt record not reported")
 	}
+}
+
+// testExe is this test binary's absolute path. os.Args[0] can be a bare
+// relative name (e.g. when launched through WSL interop), which os/exec
+// refuses to run.
+func testExe(t *testing.T) string {
+	t.Helper()
+	p, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
 }

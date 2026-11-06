@@ -14,7 +14,7 @@ import (
 // prints its PID; killing the parent must take the child down with it.
 func TestChildDiesWithParent(t *testing.T) {
 	if os.Getenv("PROCJOB_HELPER") == "parent" {
-		child := exec.Command(os.Args[0], "-test.run=^TestChildDiesWithParent$")
+		child := exec.Command(testExe(t), "-test.run=^TestChildDiesWithParent$")
 		child.Env = append(os.Environ(), "PROCJOB_HELPER=child")
 		Prepare(child)
 		if err := child.Start(); err != nil {
@@ -32,7 +32,7 @@ func TestChildDiesWithParent(t *testing.T) {
 		os.Exit(0)
 	}
 
-	parent := exec.Command(os.Args[0], "-test.run=^TestChildDiesWithParent$")
+	parent := exec.Command(testExe(t), "-test.run=^TestChildDiesWithParent$")
 	parent.Env = append(os.Environ(), "PROCJOB_HELPER=parent")
 	out, err := parent.StdoutPipe()
 	if err != nil {
@@ -61,4 +61,16 @@ func TestChildDiesWithParent(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	t.Fatalf("child %d outlived its killed parent", pid)
+}
+
+// testExe is this test binary's absolute path. os.Args[0] can be a bare
+// relative name (e.g. when launched through WSL interop), which os/exec
+// refuses to run.
+func testExe(t *testing.T) string {
+	t.Helper()
+	p, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
 }

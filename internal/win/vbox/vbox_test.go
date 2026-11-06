@@ -218,7 +218,7 @@ func TestMain(m *testing.M) {
 }
 
 func TestExecRunner(t *testing.T) {
-	r := ExecRunner{Path: os.Args[0]}
+	r := ExecRunner{Path: testExe(t)}
 	t.Setenv("FAKE_VBOXMANAGE", "ok")
 	out, err := r.Run(context.Background(), "-test.run=^$")
 	if err != nil || out != "hi\n" {
@@ -242,4 +242,16 @@ func TestLocate(t *testing.T) {
 	if got, err := Locate(); err != nil || got != exe {
 		t.Fatalf("Locate = %q, %v", got, err)
 	}
+}
+
+// testExe is this test binary's absolute path. os.Args[0] can be a bare
+// relative name (e.g. when launched through WSL interop), which os/exec
+// refuses to run.
+func testExe(t *testing.T) string {
+	t.Helper()
+	p, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
 }
