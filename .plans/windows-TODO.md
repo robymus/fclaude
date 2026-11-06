@@ -91,10 +91,13 @@ the Windows machine. Each phase ends with a verification step.
       reachable via `10.0.2.2` (moot after the switch). **VMware: the NAT gateway reaches nothing.**
 - [x] **R3** (VMware): remove-while-mounted empties the mount, re-add heals it; order guest
       `umount` → `removeSharedFolder`. (Loop-test ×50 in Phase 6 Verify.)
-- [ ] **R2** HGFS test matrix (PLAN §6): git clone/status/commit on a Windows-git repo; npm ci with
-      `--no-bin-links` vs a VM-local `node_modules`; rename while VS Code holds the file;
-      create-in-VM → open in VS Code; 1 GB file; case-only rename; sqlite fsync; small-file perf
-      (`git status` on a big tree) → **gate: HGFS vs SMB**. Light load; say so before running.
+- [x] **R2** HGFS matrix (2026-11-06, PLAN §0.7): **passes, so HGFS stays (no SMB).** git ok (a
+      Windows-git repo shows 0 dirty lines in VM git); `npm ci` fails on symlinks, works with
+      `--no-bin-links` (3.4× slower) and at native speed with a VM-local `node_modules` bind mount;
+      small files ~40× slower per op (1,322-file scan 0.44 s); 1 GB at 111/430 MB/s write/read;
+      case rename, sqlite WAL + rollback journal, create-in-VM → read-on-Windows all ok. Files held
+      open by Windows with sharing allowed: all ops work; held exclusively: EACCES (and `mv` says
+      ENOENT). **Follow-up (Phase 6 share/Phase 8):** VM-local `node_modules` bind mount.
 - [x] **R8** Claude OAuth login over Windows `ssh.exe -t` in Windows Terminal (VMware VM): URL copy, code paste, rendering, resize, Ctrl+C all fine (user, 2026-11-06).
 - [ ] **Verify:** PLAN updated with results; any flipped decision noted in §3 with the reason.
 

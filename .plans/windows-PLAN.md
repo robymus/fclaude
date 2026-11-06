@@ -243,6 +243,26 @@ VMware-range static MACs. Driven by `vmrun -T ws` without admin.
   `procjob`, wrapper design) is unchanged. Host-only subnet is assigned by VMware (read it from
   the adapter or `vmnetlib`), not fixed at 192.168.56.0/24.
 
+**R2 (HGFS matrix), passed; HGFS stays.** Test dir `C:\dev\r2-hgfs` shared into the VMware VM,
+compared with the VM disk:
+
+| Test | HGFS | VM disk |
+|---|---|---|
+| git clone express / status / commit | 19.9 s / 0.36 s / 0.14 s | 16.7 s / 0.01 s / 0.02 s |
+| Git-for-Windows repo, VM `git status` | 0 dirty lines | |
+| `npm ci` (typescript, eslint, esbuild) | plain: **fails** (symlinks); `--no-bin-links` 5.2 s; VM-local `node_modules` 1.6 s | 1.5 s |
+| 1,322-file scan: find / stat | 0.44 s / 0.90 s | 0.01 s / 0.02 s |
+| 1 GB write / read | 111 / 430 MB/s (checksum matches on Windows) | 280 / 1,260 MB/s |
+| case-only rename; sqlite WAL + rollback journal; create in VM → read on Windows | all correct | |
+| file held open on Windows | sharing allowed: read/write/rename/delete OK; exclusive: EACCES (`mv` reports ENOENT) | |
+
+**`node_modules` design:** a VM-local `node_modules` bind-mounted over the workspace's
+(`/var/lib/fclaude/nm/<wskey>` → `<ws>/node_modules`). It's native speed and keeps Linux-only
+binaries (esbuild etc.) from overwriting the Windows `node_modules` that the brother's Windows
+tools use. The bind mount must be set up before the mount is handed to claude, and released with
+the share. The cheap alternative is `/etc/npmrc` `bin-links=false`, but that still clobbers the
+Windows tree. Decide the default in Phase 6 (`share`), and document it in the README.
+
 **R6 (NAT `10.0.2.2` reachability), done.** Probed from the provisioned VM via TCP connect. The
 targets were real host services: loopback-only `127.0.0.1:1042` and `:9080`; all-interface 135,
 445, 5040, 9012; 139 on 192.168.56.1.
@@ -631,7 +651,7 @@ Workspaces must be under `SHARE_ROOT`. Otherwise the wrapper prints a clear erro
 | ID | Question | How | Pass → | Fail → |
 |---|---|---|---|---|
 | R1 | Is a hypervisor viable next to WSL2 (Hyper-V on)? | Boot headless; 6-vCPU `stress-ng --cpu --vm --verify` while polling ssh; check `dmesg`. | **VirtualBox: FAILED. VMware Workstation: PASSED** (§0.7) | — |
-| R2 | Is HGFS good enough? | Share on a running VM; in the VM: `git clone` + `git status` + commit, `npm ci` (symlinks: expected to fail, so test `--no-bin-links` and a VM-local `node_modules`), rename while VS Code has the file open, create in the VM and open in VS Code at once, a 1 GB file, case-only rename, `fsync`-heavy `sqlite3`, and small-file performance (`git status` on a big tree). | HGFS | SMB backend (§3.2) |
+| R2 | Is HGFS good enough? | Share on a running VM; in the VM: `git clone` + `git status` + commit, `npm ci` (symlinks: expected to fail, so test `--no-bin-links` and a VM-local `node_modules`), rename while VS Code has the file open, create in the VM and open in VS Code at once, a 1 GB file, case-only rename, `fsync`-heavy `sqlite3`, and small-file performance (`git status` on a big tree). | **PASSED** (§0.7): HGFS stays | — |
 | R3 | Do share add/remove work reliably while mounted? | add → mount → remove-with-mount → re-add loops. | **Done (VMware):** remove empties the mount, re-add heals it. Order: guest `umount` → `removeSharedFolder` | — |
 | R4 | How does the Windows extension call the wrapper, and what path forms appear? | Native pass-through capture build (see below): log argv/env/cwd/stdio, run the bundled `claude.exe` natively. Exercise: chat, @-mention a file, selection context, Edit/Write diff accept and reject, open file links, a second workspace folder (multi-root; the extension has no `/add-dir`) and an absolute path outside the workspace, plan mode, interrupt, close tab. Confirm that `.exe` is required (try a `.cmd` once). | Paths in well-defined fields → build Option A | Option B (Remote-SSH) |
 | R5 | Does Option A make diffs and file links work end to end? | After building the rewriter: the same scenario list as R4, checked by hand. | Ship A | B, or A with known gaps listed |
