@@ -40,8 +40,8 @@ fclaude
 The first time, Claude asks you to log in. Follow the link it prints.
 
 **VS Code:** restart VS Code, open a folder under `C:\dev`, and use the Claude extension as usual.
-In the extension settings, enable its "skip permissions" option. Claude runs in the VM, not on
-Windows.
+Setup has set the extension to skip permission prompts, because Claude runs in the VM, not on
+Windows. Uninstall turns that back off.
 
 Other commands (`fclaude --help` lists them all):
 

@@ -339,6 +339,11 @@ func TestEditVSCodeSettingsNew(t *testing.T) {
 	if !strings.Contains(string(b), `"claudeCode.claudeProcessWrapper": "C:\\x\\fclaude-vscode.exe"`) {
 		t.Errorf("%s", b)
 	}
+	for _, want := range []string{`"claudeCode.allowDangerouslySkipPermissions": true`, `"claudeCode.initialPermissionMode": "bypassPermissions"`} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("settings lack %s:\n%s", want, b)
+		}
+	}
 	if m, _ := filepath.Glob(p + ".*.bak"); len(m) != 0 {
 		t.Error("backup of a file that did not exist")
 	}

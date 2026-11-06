@@ -3,6 +3,7 @@ package install
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -502,6 +503,8 @@ func finish(d Deps) error {
 	ui, l := d.UI, d.Layout
 	wrapper := filepath.Join(l.Bin(), "fclaude-vscode.exe")
 	if d.VSCodeSettings != "" {
+		ui.Info("VS Code: the Claude extension can run inside the VM, with permission prompts")
+		ui.Info("skipped (safe there: the VM is the sandbox, as with `fclaude` in a terminal).")
 		ok, err := ui.Confirm("Set up the VS Code Claude extension to run inside the VM?", true)
 		if err != nil {
 			return err
@@ -515,22 +518,44 @@ func finish(d Deps) error {
 		}
 	}
 	ui.Info("Done. To use the VM from VS Code, set in settings.json:")
-	ui.Info(`  "claudeCode.claudeProcessWrapper": %q`, wrapper)
+	for _, s := range vscodeSettings(wrapper) {
+		v, _ := json.Marshal(s.value)
+		ui.Info("  %q: %s", s.key, v)
+	}
 	ui.Info("Next: open a new terminal, cd into a project under your projects folder and run `fclaude`.")
 	ui.Info("Claude asks you to log in the first time.")
 	return nil
 }
 
-// editVSCodeSettings sets the wrapper in settings.json, after a timestamped
-// backup. Comments and formatting are preserved (SetJSONCString).
+type vscodeSetting struct {
+	key   string
+	value any
+}
+
+// vscodeSettings are what setup writes into VS Code's user settings: run
+// the extension's claude through the wrapper, and in bypass-permissions mode
+// (the VM is the sandbox). Uninstall removes all of them: without the VM,
+// skipping permissions would apply to Windows itself.
+func vscodeSettings(wrapper string) []vscodeSetting {
+	return []vscodeSetting{
+		{wrapperSetting, wrapper},
+		{"claudeCode.allowDangerouslySkipPermissions", true},
+		{"claudeCode.initialPermissionMode", "bypassPermissions"},
+	}
+}
+
+// editVSCodeSettings writes vscodeSettings into settings.json, after a
+// timestamped backup. Comments and formatting are preserved.
 func editVSCodeSettings(path, wrapper string, now func() time.Time) error {
 	src, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	out, err := SetJSONCString(src, wrapperSetting, wrapper)
-	if err != nil {
-		return err
+	out := src
+	for _, s := range vscodeSettings(wrapper) {
+		if out, err = SetJSONCValue(out, s.key, s.value); err != nil {
+			return err
+		}
 	}
 	return writeWithBackup(path, src, out, now)
 }

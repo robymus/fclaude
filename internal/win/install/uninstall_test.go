@@ -77,7 +77,7 @@ func TestUninstallKeepsDiskThenReinstallRestores(t *testing.T) {
 	if strings.Join(*actions, ",") != strings.Join(want, ",") {
 		t.Errorf("actions %v, want %v", *actions, want)
 	}
-	if b, _ := os.ReadFile(e.d.VSCodeSettings); strings.Contains(string(b), wrapperSetting) || !strings.Contains(string(b), "// mine") {
+	if b, _ := os.ReadFile(e.d.VSCodeSettings); strings.Contains(string(b), "claudeCode.") || !strings.Contains(string(b), "// mine") || !strings.Contains(string(b), `"a": 1`) {
 		t.Errorf("VS Code settings after uninstall:\n%s", b)
 	}
 

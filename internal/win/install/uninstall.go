@@ -146,12 +146,21 @@ func unsetVSCode(d Deps) {
 	if err != nil || !bytes.Contains(src, []byte(wrapperSetting)) || !bytes.Contains(bytes.ToLower(src), []byte("fclaude-vscode")) {
 		return
 	}
-	ok, err := ui.Confirm("Remove the fclaude setting from VS Code (Claude then runs on Windows again)?", true)
+	ok, err := ui.Confirm("Remove the fclaude settings from VS Code (Claude then runs on Windows again, with permission prompts)?", true)
 	if err != nil || !ok {
-		ui.Info("Left VS Code's settings as they are: remove %q from %s by hand.", wrapperSetting, path)
+		ui.Warn("Left VS Code's settings as they are: remove these from %s by hand", path)
+		ui.Warn("(skipping permissions without the VM is unsafe):")
+		for _, s := range vscodeSettings("") {
+			ui.Warn("  %q", s.key)
+		}
 		return
 	}
-	out, err := DeleteJSONCMember(src, wrapperSetting)
+	out := src
+	for _, s := range vscodeSettings("") {
+		if out, err = DeleteJSONCMember(out, s.key); err != nil {
+			break
+		}
+	}
 	if err == nil {
 		err = writeWithBackup(path, src, out, d.Now)
 	}
@@ -159,5 +168,5 @@ func unsetVSCode(d Deps) {
 		ui.Warn("Could not edit %s: %v", path, err)
 		return
 	}
-	ui.Info("VS Code setting removed (restart VS Code).")
+	ui.Info("VS Code settings removed (restart VS Code).")
 }

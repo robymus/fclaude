@@ -15,6 +15,11 @@ import (
 // only its value replaced; a new member is inserted after the last one,
 // matching the file's indentation and newline style.
 func SetJSONCString(src []byte, key, value string) ([]byte, error) {
+	return SetJSONCValue(src, key, value)
+}
+
+// SetJSONCValue is SetJSONCString for any JSON-encodable value.
+func SetJSONCValue(src []byte, key string, value any) ([]byte, error) {
 	val, err := json.Marshal(value)
 	if err != nil {
 		return nil, err
