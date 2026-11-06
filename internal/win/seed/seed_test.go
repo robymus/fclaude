@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -124,6 +125,15 @@ func TestWriteISORoundTrip(t *testing.T) {
 	if err := WriteISO(path, files); err != nil {
 		t.Fatal(err)
 	}
+	// VirtualBox rejects a DVD image that is not whole sectors; the file must
+	// end exactly where the volume does.
+	st, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Size()%2048 != 0 || st.Size() > 1<<20 {
+		t.Errorf("image size %d: not sector-aligned or untrimmed", st.Size())
+	}
 
 	// Independent check with the system ISO tools when present (CI installs
 	// genisoimage): the label and the Rock Ridge names cloud-init looks for.
@@ -137,6 +147,9 @@ func TestWriteISORoundTrip(t *testing.T) {
 	}
 	if !regexp.MustCompile(`(?m)^Volume id: cidata\s*$`).Match(out) {
 		t.Errorf("volume label wrong:\n%s", out)
+	}
+	if m := regexp.MustCompile(`(?m)^Volume size is: (\d+)`).FindSubmatch(out); m == nil || string(m[1]) != strconv.FormatInt(st.Size()/2048, 10) {
+		t.Errorf("volume size %q != file size %d/2048", m, st.Size())
 	}
 	if !bytes.Contains(out, []byte("Rock Ridge signatures version")) {
 		t.Errorf("no Rock Ridge:\n%s", out)
@@ -171,5 +184,29 @@ func TestReadAssetNormalizesCRLF(t *testing.T) {
 	}
 	if strings.Contains(ud, "\r") || !strings.HasPrefix(ud, "#cloud-config\n") {
 		t.Fatal("asset not LF-normalized")
+	}
+}
+
+func TestTrimToVolumeRejectsNonISO(t *testing.T) {
+	dir := t.TempDir()
+	short := filepath.Join(dir, "short")
+	if err := os.WriteFile(short, []byte("tiny"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	notISO := filepath.Join(dir, "zeros")
+	if err := os.WriteFile(notISO, make([]byte, 40*2048), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	zeroVol := filepath.Join(dir, "zerovol")
+	b := make([]byte, 40*2048)
+	b[16*2048] = 1
+	copy(b[16*2048+1:], "CD001") // valid signature, volume size 0
+	if err := os.WriteFile(zeroVol, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{short, notISO, zeroVol, filepath.Join(dir, "missing")} {
+		if err := trimToVolume(p); err == nil {
+			t.Errorf("%s: no error", filepath.Base(p))
+		}
 	}
 }

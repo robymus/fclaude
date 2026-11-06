@@ -8,6 +8,7 @@ package seed
 
 import (
 	"encoding/base64"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -241,5 +242,37 @@ func WriteISO(path string, files map[string][]byte) error {
 		_ = os.Remove(path)
 		return err
 	}
+	if err := trimToVolume(path); err != nil {
+		_ = os.Remove(path)
+		return err
+	}
 	return nil
+}
+
+// trimToVolume truncates the image to the size its primary volume descriptor
+// declares. The image is pre-sized with headroom that Finalize leaves in
+// place; VirtualBox refuses a DVD image that is not whole 2048-byte sectors
+// ("Invalid UUID or filename"), while qemu does not care.
+func trimToVolume(path string) error {
+	f, err := os.OpenFile(path, os.O_RDWR, 0)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	// PVD at sector 16: type 1, "CD001"; volume space size (LE uint32) at offset 80.
+	pvd := make([]byte, 84)
+	if _, err := f.ReadAt(pvd, 16*2048); err != nil {
+		return fmt.Errorf("seed: read volume descriptor: %w", err)
+	}
+	if pvd[0] != 1 || string(pvd[1:6]) != "CD001" {
+		return errors.New("seed: no primary volume descriptor at sector 16")
+	}
+	blocks := int64(binary.LittleEndian.Uint32(pvd[80:84]))
+	if blocks < 17 {
+		return fmt.Errorf("seed: implausible volume size %d blocks", blocks)
+	}
+	if err := f.Truncate(blocks * 2048); err != nil {
+		return err
+	}
+	return f.Close()
 }
