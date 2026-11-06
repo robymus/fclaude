@@ -154,3 +154,41 @@ func TestRootWithSpaces(t *testing.T) {
 		t.Errorf("uri: %q", got)
 	}
 }
+
+func TestRootSpelling(t *testing.T) {
+	cases := []struct{ root, cwd, want string }{
+		{`C:\dev`, `c:\dev\r4-scratch`, `c:\dev`}, // VS Code fsPath: lower-case drive
+		{`C:\dev`, `c:\Dev\app`, `c:\Dev`},
+		{`C:\dev`, `C:\dev`, `C:\dev`},
+		{`C:\Users\Bro\code`, `c:\users\bro\code\x\y`, `c:\users\bro\code`},
+		{`C:\dev`, `c:/dev/app`, `c:\dev`},
+		{`C:\dev`, `c:\devices\app`, `C:\dev`}, // sibling, not beneath
+		{`C:\dev`, `d:\dev\app`, `C:\dev`},     // other drive
+		{`C:\dev\a\b`, `c:\dev`, `C:\dev\a\b`}, // cwd above the root
+		{`C:\dev`, `relative\x`, `C:\dev`},
+	}
+	for _, c := range cases {
+		if got := RootSpelling(c.root, c.cwd); got != c.want {
+			t.Errorf("RootSpelling(%q, %q) = %q, want %q", c.root, c.cwd, got, c.want)
+		}
+	}
+}
+
+func TestLowerDriveOutput(t *testing.T) {
+	m, err := New(`c:\dev`, "/home/fclaude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := m.ToWinPath("/home/fclaude/app/x.ts"); got != `c:\dev\app\x.ts` {
+		t.Errorf("ToWinPath = %q, want lower-case drive", got)
+	}
+	if got, ok := m.ToVMPath(`C:\DEV\app`); !ok || got != "/home/fclaude/app" { // matching stays case-insensitive
+		t.Errorf("ToVMPath = %q %v", got, ok)
+	}
+	if m.WinRoot() != `C:\dev` {
+		t.Errorf("WinRoot = %q, want canonical", m.WinRoot())
+	}
+	if got, _ := m.ToWinPath("file:///home/fclaude/app"); got != "file:///c%3A/dev/app" {
+		t.Errorf("URI = %q", got)
+	}
+}

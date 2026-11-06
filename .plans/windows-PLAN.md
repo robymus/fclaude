@@ -158,6 +158,58 @@ Observed results (2026-11-06):
   top level, and cloud-init adds the `network:` wrapper itself. Raw `netplan generate` needs that
   wrapper.
 
+### 0.7 Phase 5 results (Windows session, 2026-11-06)
+Host: Windows 11 26200, **AMD Ryzen 7 7840HS (Zen4), the same laptop as the Linux host**, 31 GiB,
+VirtualBox 7.2.22, VS Code + Claude Code extension 2.1.318.
+
+**R4 (capture), done. Gate result: build Option A.** Fixtures are in
+`internal/win/pathmap/testdata/windows/`, replayed by `pathmap/replay_test.go`.
+- The extension spawns the wrapper as `wrapper <…\native-binary\claude.exe> <flags>` with cwd
+  set to the workspace. A **`.cmd` wrapper fails** (`spawn EINVAL`, the CVE-2024-27980 guard), so
+  the wrapper must be a real `.exe` (confirmed).
+- Each new Claude tab spawns **several** processes through the wrapper: `auth status --json`, the
+  stream-json session, a short second stream-json session (`--thinking=disabled`, exits fast), and
+  the `--claude-in-chrome-mcp` helper (cwd = the VS Code install dir, outside the share root).
+  Every spawn costs an ssh round trip, so a cold VM is paid for on the first spawn (R7).
+  `auth status` is workspace-agnostic and should skip the mount, like the MCP helpers (extend
+  `mcphelper`).
+- **Path forms on the wire:** only backslash drive paths. The drive is **lower-case `c:`** (VS
+  Code's fsPath, from the cwd), and sometimes `C:` when the model writes a path itself. Native
+  claude mixes both. There are **no `file://` URIs and no forward-slash paths** in stdio.
+- **Where paths appear:** whole-string fields (`cwd`, `original_cwd`, `additional_directories`,
+  `file_path`, `path`, `filePath`, and the new `wire_tool_inputs.<tool_id>` map, plus hook
+  `tool_input`/`tool_response`). Embedded in text: `<ide_selection>`/`<ide_opened_file>` context
+  (sent in, and replayed out by `--replay-user-messages`) and tool-result messages. Extension →
+  claude also carries `control_response.updatedInput.file_path`.
+- A second workspace folder (multi-root) arrives as **`--add-dir=c:\dev\r4-extra`**. The
+  extension has no `/add-dir` command.
+- `transcript_path`/`memory_paths` point into claude's own config dir
+  (`~\.claude\projects\c--dev-r4-scratch\…`), outside the share root. In the VM they become VM
+  paths and are not mapped. The extension's diff/hook flow uses `tool_input.file_path`, which
+  *is* mapped.
+- **Replay result:** of 27 claude→extension lines, **20 round-trip byte-exactly** and 6 differ
+  only in drive case (where native claude wrote `C:` itself). This needs the Mapper to keep the
+  root's drive case, built from `RootSpelling(shareRoot, cwd)`, which is now implemented.
+  Extension→claude: all paths mapped.
+- **Open, for R5:** `stream_event` `input_json_delta.partial_json` streams tool input as JSON
+  *fragments*, so a path is split across chunks and a line-local rewriter cannot map it. The
+  complete input follows in the `assistant` message. If R5 shows the extension renders paths from
+  the deltas, add a stateful per-content-block rewriter that holds back a possible root prefix
+  until a terminator.
+- **Env (Linux has the same gap):** the extension sets `CLAUDE_CODE_ENTRYPOINT=claude-vscode`,
+  `CLAUDE_AGENT_SDK_VERSION`, `CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING`,
+  `CLAUDE_CODE_SDK_READS_*`, `CLAUDE_CODE_EMIT_*` and others. ssh does not forward them, and
+  neither wrapper does so today. Phase 9: forward an allowlist of `CLAUDE_*` vars (`env K=V` on
+  the remote command, since sshd has no `AcceptEnv`).
+
+**Installer-relevant VirtualBox findings** (fixed in code, or queued in the TODO):
+- Seed ISO not a whole number of 2048-byte sectors → VirtualBox refused it as a DVD (qemu doesn't
+  care). Fixed in `seed.WriteISO` (trim to the volume size).
+- `clonemedium` registers the source VMDK, and the Ubuntu VMDK has a zero UUID, so a second
+  import fails. Fixed in `ImportDiskCommands` (close the source before and after).
+- `--nat-localhostreachable1 off` does not survive a VBoxSVC restart (§0.3).
+- `showvminfo` fails transiently with `E_ACCESSDENIED` during poweroff.
+
 ---
 
 ## 1. Goal and scope
@@ -516,7 +568,7 @@ Workspaces must be under `SHARE_ROOT`. Otherwise the wrapper prints a clear erro
 | R1 | Is VirtualBox on Hyper-V (NEM; WSL2 stays on) viable? | Install VBox 7.1.x, boot the Ubuntu vmdk headless. Time the boot and `stress-ng`/`npm ci` on a sample repo; check `dmesg` for MCEs/segfaults over 30 min; run WSL at the same time. | VirtualBox | Hyper-V must stay on, so the fallback is a **Hyper-V backend** (Windows Pro; `New-VM` via PowerShell) behind the same `vbox`-style interface. That would be a plan change, raised with the user. |
 | R2 | Is vboxsf good enough? | Transient share on a running VM; in the VM: `git clone` + `git status` + commit, `npm ci` (symlinks), file rename while VS Code has the file open, create a file in the VM and open it in VS Code at once, a 1 GB file, case-only rename, `fsync`-heavy `sqlite3`. Also: does the per-share `SharedFoldersEnableSymlinksCreate` extradata work for transient shares without a VM restart? | vboxsf | SMB backend (§3.2), with a firewall exception for 445 from 192.168.56.10 only, and accept root-share scope |
 | R3 | Do transient share add/remove work reliably while mounted, and what does the VM see after `remove` with the mount still up? | Script add → mount → remove-with-mount → remount loops. | Order: VM `umount` (lazy fallback) → `sharedfolder remove` | Add `--cleanup` heuristics |
-| R4 | How does the Windows extension call the wrapper, and what path forms appear? | Native pass-through capture build (see below): log argv/env/cwd/stdio, run the bundled `claude.exe` natively. Exercise: chat, @-mention a file, selection context, Edit/Write diff accept and reject, open file links, `/add-dir`, plan mode, interrupt, close tab. Confirm that `.exe` is required (try a `.cmd` once). | Paths in well-defined fields → build Option A | Option B (Remote-SSH) |
+| R4 | How does the Windows extension call the wrapper, and what path forms appear? | Native pass-through capture build (see below): log argv/env/cwd/stdio, run the bundled `claude.exe` natively. Exercise: chat, @-mention a file, selection context, Edit/Write diff accept and reject, open file links, a second workspace folder (multi-root; the extension has no `/add-dir`) and an absolute path outside the workspace, plan mode, interrupt, close tab. Confirm that `.exe` is required (try a `.cmd` once). | Paths in well-defined fields → build Option A | Option B (Remote-SSH) |
 | R5 | Does Option A make diffs and file links work end to end? | After building the rewriter: the same scenario list as R4, checked by hand. | Ship A | B, or A with known gaps listed |
 | R6 | What can the VM reach via NAT `10.0.2.2`? | From the VM: `nc -zv 10.0.2.2` on 135/139/445/3389/80 and a test listener on 0.0.0.0:8080 and 127.0.0.1:8081. | Document | §3.7 fallback |
 | R7 | Does the extension time out while the wrapper cold-boots the VM (~30 s)? | Shut the VM off, open the Claude panel. | Fine | Print progress to stderr; optionally autostart the VM at logon (a Task Scheduler entry `fclaude.exe --start`) |

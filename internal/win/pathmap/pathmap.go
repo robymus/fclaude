@@ -25,6 +25,7 @@ import (
 // Mapper converts paths between one Windows share root and one VM mount base.
 type Mapper struct {
 	winRoot string // cleaned, e.g. C:\dev
+	outRoot string // winRoot with the caller's drive-letter case, used for output
 	vmRoot  string // e.g. /home/fclaude
 
 	winText *regexp.Regexp // embedded Windows-path finder
@@ -47,6 +48,10 @@ func New(winRoot, vmRoot string) (*Mapper, error) {
 		return nil, fmt.Errorf("pathmap: vm root %q must be an absolute non-root path", vmRoot)
 	}
 	m := &Mapper{winRoot: winpath.Clean(winRoot), vmRoot: vmRoot}
+	m.outRoot = m.winRoot
+	if i := strings.IndexByte(winRoot, ':'); i > 0 && winRoot[i-1] >= 'a' && winRoot[i-1] <= 'z' {
+		m.outRoot = strings.ToLower(m.winRoot[:1]) + m.winRoot[1:]
+	}
 
 	// Windows root as a regexp: drive (with ':' or URI-encoded %3A), then the
 	// root's components joined by any run of separators, then an optional tail.
@@ -59,6 +64,29 @@ func New(winRoot, vmRoot string) (*Mapper, error) {
 		strings.Join(segs, sep) + `(?:[\\/][^` + textTerminators + `]*)?`)
 	m.vmText = regexp.MustCompile(`(?:file://)?` + regexp.QuoteMeta(m.vmRoot) + `(?:/[^` + textTerminators + `]*)?`)
 	return m, nil
+}
+
+// RootSpelling returns root spelled the way cwd spells it, when cwd is the
+// root or beneath it; otherwise root unchanged. The VS Code extension passes
+// the workspace as VS Code's fsPath, which has a lower-case drive
+// (c:\dev\app), and native claude echoes that spelling in every path it
+// reports. Building the Mapper from RootSpelling(shareRoot, cwd) makes the
+// VM→Windows output byte-identical to a native session.
+func RootSpelling(root, cwd string) string {
+	if !winpath.IsAbs(root) || !winpath.IsAbs(cwd) {
+		return root
+	}
+	n := len(strings.Split(winpath.Clean(root)[3:], `\`))
+	i := strings.IndexByte(cwd, ':')
+	segs := strings.FieldsFunc(cwd[i+1:], func(r rune) bool { return r == '\\' || r == '/' })
+	if len(segs) < n {
+		return root
+	}
+	spelled := cwd[i-1:i+1] + `\` + strings.Join(segs[:n], `\`)
+	if !strings.EqualFold(winpath.Clean(spelled), winpath.Clean(root)) {
+		return root
+	}
+	return spelled
 }
 
 // WinRoot returns the cleaned Windows share root.
@@ -123,7 +151,7 @@ func (m *Mapper) vmToWin(p string) (string, bool) {
 	if rel == path.Clean(p) || !mappable(rel) { // Clean escaped the root (e.g. "/home/fclaude/../x")
 		return p, false
 	}
-	out := winpath.Join(m.winRoot, rel)
+	out := m.outRoot + `\` + strings.ReplaceAll(rel, "/", `\`)
 	if strings.HasSuffix(p, "/") {
 		out += `\`
 	}

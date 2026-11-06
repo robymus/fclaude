@@ -68,11 +68,11 @@ the Windows machine. Each phase ends with a verification step.
       interop** after a test fix (re-exec `os.Executable()`, not the relative `os.Args[0]`).
 - [x] Confirm PLAN §0.3 assumptions #1–#3: flags OK, fixtures re-captured, host-only changes need
       admin (UAC; installer default adapter is already correct). **Found the NAT localhost-reachable persistence bug** (PLAN §0.3), so the fix moves to R6.
-- [ ] **R4 capture (first, no VM needed):** cross-build `fclaude-capture.exe` (already implemented)
-      into `%USERPROFILE%\.fclaude\bin`, set it as `claudeCode.claudeProcessWrapper`, run the R4
-      scenario list in VS Code (logs land in `%USERPROFILE%\.fclaude\captures\`);
-      sanitize → `internal/win/pathmap/testdata/windows/`; validate the Phase 3 `pathmap` tables
-      against it and fix any path form the tables missed.
+- [x] **R4 capture:** done; **gate: Option A** (PLAN §0.7). `.cmd` wrapper → `spawn EINVAL`.
+      Fixtures in `pathmap/testdata/windows/` with `replay_test.go` (20/27 exact round trips, 6
+      drive-case only, 1 `partial_json` fragment left for R5). Fix: Mapper keeps the root's drive
+      case + `RootSpelling(root, cwd)`. Queued for Phase 9: `auth status` skips the mount;
+      forward `CLAUDE_*` env; `partial_json` decision.
 - [ ] **R1** VirtualBox on Hyper-V (WSL2 on, running concurrently): boot, 30-min stability, perf →
       record in PLAN. **Gate:** if not viable, stop and raise the Hyper-V-backend alternative with user.
 - [ ] **R6** NAT `10.0.2.2` reachability matrix → record; pick §3.7 fallback if needed. Run it
@@ -121,10 +121,10 @@ the Windows machine. Each phase ends with a verification step.
 
 - [ ] Replay the Phase 5 R4 fixtures through the full wrapper (VM-side claude) → **gate: Option A vs B**.
 - [ ] **R7** cold-boot timeout behaviour (stderr progress / logon autostart if needed).
-- [ ] Option A: `fclaude-vscode.exe` (drop argv[1], argv rewrite, MCP-helper bypass, lease/share,
+- [ ] Option A: `fclaude-vscode.exe` (drop argv[1], argv rewrite incl. `--add-dir=`, MCP-helper + `auth status` bypass, Mapper from `RootSpelling(root, cwd)`, allowlisted `CLAUDE_*` env forwarding, lease/share,
       in-process ssh with bidirectional `RewriteJSONLine`, stderr error messages, capture mode kept).
 - [ ] **R5** end-to-end scenario list (chat, @-mention, selection, diff accept/reject, file links,
-      `/add-dir`, plan mode, interrupt, close tab).
+      second workspace folder (no `/add-dir` in the extension), plan mode, interrupt, close tab).
 - [ ] (Only if B) Remote-SSH docs + `fclaude --mount` hold workflow + `.ssh/config` entry generator.
 - [ ] **Verify:** R5 all pass (or gaps listed in README); close VS Code → share released by next run.
 
