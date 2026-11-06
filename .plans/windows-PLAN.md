@@ -46,6 +46,12 @@ section is everything the Linux session knew that the code and git history don't
 - The installed Claude Code in the VM is the native build (it was 2.1.316 on 2026-11-06), and it
   auto-updates.
 
+- **CI is green on `windows-latest`** (commit 4ce09eb). The Win32 code in `lease` (OpenProcess,
+  GetProcessTimes, LockFileEx) and `procjob` (the Job Object kill-on-close test) passes on real
+  Windows. That run also caught CRLF in the embedded assets (now prevented by `.gitattributes`
+  `eol=lf` plus normalization in `seed`) and an ISO file-handle leak. **Lesson: keep the repo LF;
+  if you clone the repo on the Windows side (not in WSL), check `git ls-files --eol`.**
+
 ### 0.3 Unverified assumptions to check first on Windows
 These are marked in the code, too.
 1. **VBoxManage flag spellings** in `vbox.DefineCommands` (7.1 names: `--audio-enabled`,

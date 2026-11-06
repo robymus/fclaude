@@ -29,7 +29,7 @@ the Windows machine. Each phase ends with a verification step.
       `go-windows` job (`go test ./...` on windows-latest).
 - [x] `.github/workflows/release-windows.yml` (tag `v*-win*`), written early; not exercised yet.
 - [x] **Verify:** lint 0 issues on both GOOS; all tests pass; the `.exe` cross-compiles (PE32+ x86-64).
-      CI on GitHub: check the first run on the pushed branch (Windows session, first thing).
+      CI on GitHub: **green on all jobs incl. windows-latest** (4ce09eb).
 
 ## Phase 3 — Pure-logic packages (L) — done
 
@@ -61,8 +61,8 @@ the Windows machine. Each phase ends with a verification step.
 
 ## Phase 5 — Windows environment + spikes (W)
 
-- [ ] Check prereqs (the user preinstalled them; list in PLAN §0.5), and that CI on `feat/windows` is
-      green, especially the `go-windows` job, the first real run of the Win32 code.
+- [ ] Check prereqs (the user preinstalled them; list in PLAN §0.5). CI was already green on Windows
+      (4ce09eb); re-check after any change.
 - [ ] Confirm PLAN §0.3 assumptions #1–#3 against the real VBoxManage (create a throwaway VM).
 - [ ] **R4 capture (first, no VM needed):** cross-build `fclaude-capture.exe` (already implemented)
       into `%USERPROFILE%\.fclaude\bin`, set it as `claudeCode.claudeProcessWrapper`, run the R4
@@ -80,8 +80,8 @@ the Windows machine. Each phase ends with a verification step.
 
 ## Phase 6 — Windows-API packages (W, CI on windows-latest)
 
-- [~] `lease` real liveness + `LockFileEx` lock, and `procjob` Job Object: **implemented**; the
-      tests must pass on Windows (CI `go-windows`, plus a local run via interop).
+- [x] `lease` real liveness + `LockFileEx` lock, and `procjob` Job Object: implemented, and tests
+      pass on windows-latest CI. (Optionally re-run locally via interop.)
 - [ ] `internal/win/vmssh`: x/crypto/ssh client, pinned host key, keepalive, stdio session.
 - [ ] `internal/win/share` vboxsf impl (or SMB if R2 failed): share → VM mount → verify; release
       order from R3; self-heal; rollback.
