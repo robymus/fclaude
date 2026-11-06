@@ -28,18 +28,15 @@ func TestParseOverlaysDefaults(t *testing.T) {
 
 func TestParseRejects(t *testing.T) {
 	cases := map[string]string{
-		`{"share_rot": "C:\\dev"}`:                    "unknown field",
-		`{"share_root": "dev"}`:                       "share_root",
-		`{"share_root": "C:\\"}`:                      "drive root",
-		`{"vm_ip": "192.168.57.10"}`:                  "same /24",
-		`{"vm_ip": "192.168.56.1"}`:                   "distinct",
-		`{"vm_name": "Fclaude VM"}`:                   "vm_name",
-		`{"vm_mount_base": "/home/fclaude/"}`:         "vm_mount_base",
-		`{"mem_gib": 1, "vcpu": 0}`:                   "vcpu",
-		`{} {}`:                                       "trailing",
-		`{"hostonly_prefix": 31}`:                     "hostonly_prefix",
-		`{"vm_ip": "fe80::1"}`:                        "IPv4",
-		`{"disk_gib": 8, "vm_mtu": 100, "mem_gib":1}`: "disk_gib",
+		`{"share_rot": "C:\\dev"}`:                "unknown field",
+		`{"share_root": "dev"}`:                   "share_root",
+		`{"share_root": "C:\\"}`:                  "drive root",
+		`{"vm_name": "Fclaude VM"}`:               "vm_name",
+		`{"vm_mount_base": "/home/fclaude/"}`:     "vm_mount_base",
+		`{"mem_gib": 1, "vcpu": 0}`:               "vcpu",
+		`{} {}`:                                   "trailing",
+		`{"vm_ip": "192.168.56.10"}`:              "unknown field", // network facts live in vm.json
+		`{"disk_gib": 8, "vcpu": 0, "mem_gib":1}`: "disk_gib",
 	}
 	for in, want := range cases {
 		_, err := Parse([]byte(in))

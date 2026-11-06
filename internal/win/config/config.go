@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,12 +33,9 @@ type Config struct {
 	VMName    string `json:"vm_name"`
 	VMUser    string `json:"vm_user"`
 	MaintUser string `json:"maint_user"`
-	// VMIP is the VM's static address on the host-only network; HostIP is the
-	// host's address on that network. HostOnlyPrefix is the prefix length.
-	VMIP           string `json:"vm_ip"`
-	HostIP         string `json:"host_ip"`
-	HostOnlyPrefix int    `json:"hostonly_prefix"`
-	VMMTU          int    `json:"vm_mtu"`
+	// Network facts (VM/host addresses, subnets, MTU) are not configuration:
+	// VMware assigns the subnets, so setup discovers them and records them in
+	// vm.json (package install).
 
 	MemGiB  int `json:"mem_gib"`
 	VCPU    int `json:"vcpu"`
@@ -60,10 +56,6 @@ func Defaults() Config {
 		VMName:         "fclaude",
 		VMUser:         "fclaude",
 		MaintUser:      "maint",
-		VMIP:           "192.168.56.10",
-		HostIP:         "192.168.56.1",
-		HostOnlyPrefix: 24,
-		VMMTU:          1400,
 		MemGiB:         8,
 		VCPU:           6,
 		DiskGiB:        32,
@@ -90,24 +82,6 @@ func (c Config) Validate() error {
 		if !isSimpleName(v) {
 			add("%s %q must be non-empty and contain only [a-z0-9_-]", name, v)
 		}
-	}
-	vmIP, err1 := netip.ParseAddr(c.VMIP)
-	hostIP, err2 := netip.ParseAddr(c.HostIP)
-	switch {
-	case err1 != nil || !vmIP.Is4():
-		add("vm_ip %q must be an IPv4 address", c.VMIP)
-	case err2 != nil || !hostIP.Is4():
-		add("host_ip %q must be an IPv4 address", c.HostIP)
-	case c.HostOnlyPrefix < 8 || c.HostOnlyPrefix > 30:
-		add("hostonly_prefix %d must be between 8 and 30", c.HostOnlyPrefix)
-	default:
-		pfx := netip.PrefixFrom(hostIP, c.HostOnlyPrefix).Masked()
-		if !pfx.Contains(vmIP) || vmIP == hostIP {
-			add("vm_ip %s and host_ip %s must be distinct addresses in the same /%d", vmIP, hostIP, c.HostOnlyPrefix)
-		}
-	}
-	if c.VMMTU < 576 || c.VMMTU > 9000 {
-		add("vm_mtu %d out of range 576..9000", c.VMMTU)
 	}
 	if c.MemGiB < 2 {
 		add("mem_gib %d must be at least 2", c.MemGiB)
