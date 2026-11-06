@@ -30,6 +30,7 @@ type VM interface {
 // Guest is a command channel into the VM (vmssh.Client).
 type Guest interface {
 	Output(ctx context.Context, cmd string) (string, error)
+	Run(ctx context.Context, cmd string, stdin io.Reader, stdout, stderr io.Writer) error
 	Close() error
 }
 
@@ -58,18 +59,27 @@ type App struct {
 	BootTimeout time.Duration
 	// Poll is the wait between ssh attempts while the VM boots.
 	Poll time.Duration
+
+	tag string // message prefix; "fclaude" when empty
 }
 
 // vmBootLock serializes "is it running? clear shares, sweep, start" across
 // concurrent fclaude processes. It is a lease-store lock, not a workspace.
 const vmBootLock = "vm-boot"
 
+func (a *App) prefix() string {
+	if a.tag == "" {
+		return "[fclaude] "
+	}
+	return "[" + a.tag + "] "
+}
+
 func (a *App) info(format string, args ...any) {
-	_, _ = fmt.Fprintf(a.Err, "[fclaude] "+format+"\n", args...)
+	_, _ = fmt.Fprintf(a.Err, a.prefix()+format+"\n", args...)
 }
 
 func (a *App) warn(format string, args ...any) {
-	_, _ = fmt.Fprintf(a.Err, "[fclaude] WARN: "+format+"\n", args...)
+	_, _ = fmt.Fprintf(a.Err, a.prefix()+"WARN: "+format+"\n", args...)
 }
 
 // Open loads the installation under home (config.json, vm.json, VMware).
@@ -130,7 +140,16 @@ func (a *App) running(ctx context.Context) (bool, error) {
 // shared folder left by earlier sessions: the mounts they describe lived in
 // the VM and are gone (Linux reset_refcounts_cold_boot).
 func (a *App) EnsureRunning(ctx context.Context) (Guest, error) {
-	err := a.Store.WithLock(vmBootLock, func() error {
+	// Fast path: the VM answers ssh, so it runs (vmrun list costs ~1 s; the
+	// VS Code wrapper pays this on every spawn).
+	g, err := a.Dial(ctx, a.Cfg.VMUser)
+	if err == nil {
+		return g, nil
+	}
+	if errors.Is(err, vmssh.ErrHostKeyMismatch) {
+		return nil, hostKeyError(err, a.Info.VMIP)
+	}
+	err = a.Store.WithLock(vmBootLock, func() error {
 		up, err := a.running(ctx)
 		if err != nil || up {
 			return err
@@ -164,7 +183,7 @@ func (a *App) waitGuest(ctx context.Context) (Guest, error) {
 			return g, nil
 		}
 		if errors.Is(err, vmssh.ErrHostKeyMismatch) {
-			return nil, fmt.Errorf("%w: the VM at %s is not the one setup pinned (re-run fclaude-setup.exe if you restored or replaced it)", err, a.Info.VMIP)
+			return nil, hostKeyError(err, a.Info.VMIP)
 		}
 		if !a.Now().Before(deadline) {
 			return nil, fmt.Errorf("the VM did not answer ssh at %s within %v: %w", a.Info.VMIP, a.BootTimeout, err)
@@ -179,6 +198,10 @@ func (a *App) waitGuest(ctx context.Context) (Guest, error) {
 		case <-time.After(a.Poll):
 		}
 	}
+}
+
+func hostKeyError(err error, ip string) error {
+	return fmt.Errorf("%w: the VM at %s is not the one setup pinned (re-run fclaude-setup.exe if you restored or replaced it)", err, ip)
 }
 
 func (a *App) manager(g Guest) share.Manager {
@@ -244,7 +267,10 @@ func (a *App) hold(ctx context.Context, g Guest, ws lease.Workspace) (func(), er
 type deadGuest struct{ err error }
 
 func (d deadGuest) Output(context.Context, string) (string, error) { return "", d.err }
-func (d deadGuest) Close() error                                   { return nil }
+func (d deadGuest) Run(context.Context, string, io.Reader, io.Writer, io.Writer) error {
+	return d.err
+}
+func (d deadGuest) Close() error { return nil }
 
 // stalenessWarn is the session-start reminder that updates have stalled.
 // Never fails the session.

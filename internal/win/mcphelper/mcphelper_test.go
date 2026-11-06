@@ -10,6 +10,8 @@ func TestIs(t *testing.T) {
 	}{
 		{[]string{"mcp", "serve"}, true},
 		{[]string{"mcp"}, true},
+		{[]string{"auth", "status", "--json"}, true},
+		{[]string{"-p", "auth"}, false},
 		{[]string{"--output-format", "stream-json", "--claude-in-chrome-mcp"}, true},
 		{[]string{"--claude-in-chrome-mcp"}, true},
 		{nil, false},

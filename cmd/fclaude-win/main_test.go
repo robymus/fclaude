@@ -43,14 +43,28 @@ func TestVersionAndHelp(t *testing.T) {
 	}
 }
 
-func TestNotImplemented(t *testing.T) {
-	var errb bytes.Buffer
-	// The VS Code wrapper must not treat --version as its own flag: every arg belongs to claude.
-	if code := run([]string{"fclaude-vscode.exe", "--version"}, nil, &bytes.Buffer{}, &errb); code != exitNotImplemented {
-		t.Fatalf("code %d", code)
+func TestVSCodeWrapperOwnsItsArgs(t *testing.T) {
+	t.Setenv("FCLAUDE_HOME", t.TempDir())
+	var out, errb bytes.Buffer
+	// The VS Code wrapper must not treat --version as its own flag: every arg
+	// belongs to claude. Without an installation it says so.
+	if code := run([]string{"fclaude-vscode.exe", "--version"}, nil, &out, &errb); code != 1 || out.Len() != 0 {
+		t.Fatalf("code %d stdout %q", code, out.String())
 	}
-	if !strings.Contains(errb.String(), "not implemented") {
+	if !strings.Contains(errb.String(), "run fclaude-setup") {
 		t.Fatalf("stderr %q", errb.String())
+	}
+}
+
+func TestCLIWithoutInstall(t *testing.T) {
+	t.Setenv("FCLAUDE_HOME", t.TempDir())
+	var errb bytes.Buffer
+	if code := run([]string{"fclaude.exe", "--status"}, nil, &bytes.Buffer{}, &errb); code != 1 || !strings.Contains(errb.String(), "run fclaude-setup") {
+		t.Fatalf("code %d stderr %q", code, errb.String())
+	}
+	var out bytes.Buffer
+	if code := run([]string{"fclaude.exe", "--help"}, nil, &out, &out); code != 0 || !strings.Contains(out.String(), "grow-disk") {
+		t.Fatalf("help: %d %q", code, out.String())
 	}
 }
 

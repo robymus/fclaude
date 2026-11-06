@@ -9,12 +9,16 @@
 //
 // The discriminator is fail-open: anything unrecognized is treated as a real
 // editing session and mounts as usual.
+//
+// Windows addition: `claude auth …` (the extension runs `auth status --json`
+// for every new tab) is workspace-agnostic too, and skipping its mount saves
+// a share round trip per tab.
 package mcphelper
 
 // Is reports whether args (claude's arguments, without the binary path) are
 // an MCP-helper invocation.
 func Is(args []string) bool {
-	if len(args) > 0 && args[0] == "mcp" { // `claude mcp serve|list|…`
+	if len(args) > 0 && (args[0] == "mcp" || args[0] == "auth") { // `claude mcp serve|list|…`, `claude auth status`
 		return true
 	}
 	for _, a := range args {

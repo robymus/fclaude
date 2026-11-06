@@ -8,7 +8,7 @@
 //	fclaude-setup.exe    interactive installer (the release asset)
 //	fclaude-capture.exe  research: run the bundled claude natively, log all stdio
 //
-// See .plans/windows-PLAN.md. Modes not built yet exit with status 2 and say so.
+// See .plans/windows-PLAN.md.
 package main
 
 import (
@@ -27,8 +27,6 @@ import (
 
 // version is set at release build time: -ldflags "-X main.version=<tag>".
 var version = "dev"
-
-const exitNotImplemented = 2
 
 func main() {
 	os.Exit(run(os.Args, os.Stdin, os.Stdout, os.Stderr))
@@ -80,17 +78,20 @@ func run(argv []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runCapture(argv, stdin, stdout, stderr)
 	case "fclaude-setup":
 		return runSetup(args, stdin, stdout, stderr)
-	case "fclaude":
+	case "fclaude-vscode":
+		home, err := fclaudeHome()
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "fclaude-vscode: %v\n", err)
+			return 1
+		}
+		return cli.VSCodeMain(home, argv, stdin, stdout, stderr)
+	default: // fclaude
 		home, err := fclaudeHome()
 		if err != nil {
 			_, _ = fmt.Fprintf(stderr, "fclaude: %v\n", err)
 			return 1
 		}
 		return cli.Main(home, version, args, stdin, stdout, stderr)
-	default:
-		_, _ = fmt.Fprintf(stderr, "%s %s: this mode is not implemented yet in the experimental Windows build "+
-			"(see .plans/windows-TODO.md)\n", m, version)
-		return exitNotImplemented
 	}
 }
 

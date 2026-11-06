@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -59,6 +60,8 @@ type fakeGuest struct {
 	cmds []string
 	// reply returns the output for a command; nil = "" and success.
 	reply func(cmd string) (string, error)
+	// run emulates a streaming remote command (Run).
+	run func(cmd string, in io.Reader, out, errw io.Writer) error
 }
 
 func (g *fakeGuest) Output(_ context.Context, cmd string) (string, error) {
@@ -71,6 +74,16 @@ func (g *fakeGuest) Output(_ context.Context, cmd string) (string, error) {
 	return "", nil
 }
 func (g *fakeGuest) Close() error { return nil }
+
+func (g *fakeGuest) Run(_ context.Context, cmd string, in io.Reader, out, errw io.Writer) error {
+	g.mu.Lock()
+	g.cmds = append(g.cmds, cmd)
+	g.mu.Unlock()
+	if g.run != nil {
+		return g.run(cmd, in, out, errw)
+	}
+	return nil
+}
 
 type testApp struct {
 	*App
@@ -122,6 +135,9 @@ func newTestApp(t *testing.T) *testApp {
 		ta.dials++
 		if ta.dialErr != nil {
 			return nil, ta.dialErr
+		}
+		if !ta.vm.running {
+			return nil, errors.New("connect: no route to host")
 		}
 		return ta.guest, nil
 	}
