@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/robymus/fclaude/internal/win/capture"
+	"github.com/robymus/fclaude/internal/win/cli"
 	"github.com/robymus/fclaude/internal/win/install"
 )
 
@@ -57,8 +58,20 @@ func run(argv []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			_, _ = fmt.Fprintf(stdout, "%s %s (experimental Windows build)\n", m, version)
 			return 0
 		case "--help", "-h":
+			if m == "fclaude" {
+				_, _ = io.WriteString(stdout, cli.Usage)
+				return 0
+			}
 			usage(stdout, m)
 			return 0
+		}
+	}
+
+	// The UAC-elevated steps setup and uninstall start (through whichever
+	// personality ran them).
+	if m == "fclaude" || m == "fclaude-setup" {
+		if len(args) > 0 && (args[0] == "install-elevated" || args[0] == "uninstall-elevated") {
+			return runElevated(args, stderr)
 		}
 	}
 
@@ -67,6 +80,13 @@ func run(argv []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runCapture(argv, stdin, stdout, stderr)
 	case "fclaude-setup":
 		return runSetup(args, stdin, stdout, stderr)
+	case "fclaude":
+		home, err := fclaudeHome()
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "fclaude: %v\n", err)
+			return 1
+		}
+		return cli.Main(home, version, args, stdin, stdout, stderr)
 	default:
 		_, _ = fmt.Fprintf(stderr, "%s %s: this mode is not implemented yet in the experimental Windows build "+
 			"(see .plans/windows-TODO.md)\n", m, version)
@@ -142,20 +162,33 @@ func runCapture(argv []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	return code
 }
 
-// runSetup is fclaude-setup: the interactive installer, or (internal) the
-// elevated firewall step it starts through UAC.
+// runElevated is install-elevated / uninstall-elevated (run through UAC).
+func runElevated(args []string, stderr io.Writer) int {
+	if len(args) == 0 {
+		return 2
+	}
+	step, rest := args[0], args[1:]
+	home, err := fclaudeHome()
+	if err == nil {
+		if step == "install-elevated" {
+			err = install.ElevatedStep(home, rest)
+		} else {
+			err = install.ElevatedUninstallStep(home)
+		}
+	}
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "fclaude: %s: %v\n", step, err)
+		return 1
+	}
+	return 0
+}
+
+// runSetup is fclaude-setup: the interactive installer.
 func runSetup(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	home, err := fclaudeHome()
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "fclaude-setup: %v\n", err)
 		return 1
-	}
-	if len(args) > 0 && args[0] == "install-elevated" {
-		if err := install.ElevatedStep(home, args[1:]); err != nil {
-			_, _ = fmt.Fprintf(stderr, "fclaude-setup: %v\n", err)
-			return 1
-		}
-		return 0
 	}
 	if len(args) > 0 {
 		_, _ = fmt.Fprintf(stderr, "fclaude-setup: unknown arguments %q (run it without arguments)\n", args)
