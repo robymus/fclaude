@@ -3,7 +3,9 @@ package install
 import (
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"unsafe"
@@ -165,4 +167,26 @@ func broadcastEnvironmentChange() {
 	env, _ := windows.UTF16PtrFromString(envKey)
 	var result uintptr
 	_, _, _ = procSendMessageTOW.Call(hwndBroadcast, wmSettingChange, 0, uintptr(unsafe.Pointer(env)), smtoAbortIfHung, 5000, uintptr(unsafe.Pointer(&result))) //nolint:gosec // Win32 call: UTF-16 string and result we own
+}
+
+// ScheduleRemoval deletes bin (recursively) and then home (only if empty) a
+// few seconds after this process exits: a running .exe cannot delete itself.
+// A detached, windowless cmd.exe does the work.
+func ScheduleRemoval(bin, home string) error {
+	for _, p := range []string{bin, home} {
+		if strings.ContainsAny(p, `"%^&|<>`) {
+			return fmt.Errorf("refusing to schedule removal of %q (unexpected characters)", p)
+		}
+	}
+	cmdExe := filepath.Join(os.Getenv("SystemRoot"), "System32", "cmd.exe")
+	script := fmt.Sprintf(`ping -n 4 127.0.0.1 >nul & rmdir /s /q "%s" & rmdir "%s"`, bin, home)
+	cmd := exec.Command(cmdExe) //nolint:gosec // G204: System32 cmd.exe; the command line is checked above
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		CmdLine:       `cmd.exe /d /c "` + script + `"`,
+		CreationFlags: windows.CREATE_NO_WINDOW | windows.CREATE_NEW_PROCESS_GROUP,
+	}
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	return cmd.Process.Release()
 }

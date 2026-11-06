@@ -277,3 +277,18 @@ func testExe(t *testing.T) string {
 	}
 	return p
 }
+
+func TestForgetAndWithLock(t *testing.T) {
+	s, _ := newTestStore(t)
+	_ = s.Acquire(ws, Holder{PID: 1, Started: 1}, func(int) error { return nil })
+	ran := false
+	if err := s.WithLock("vm-boot", func() error { ran = true; return nil }); err != nil || !ran {
+		t.Fatalf("WithLock: ran=%v err=%v", ran, err)
+	}
+	if err := s.Forget(ws.Key); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := s.List(); len(st) != 0 {
+		t.Fatalf("not empty after Forget (the vm-boot lock file must not count as a workspace): %+v", st)
+	}
+}

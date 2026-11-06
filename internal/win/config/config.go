@@ -45,22 +45,29 @@ type Config struct {
 	UpdateApt bool `json:"update_apt"`
 	// UpdateWarnDays: warn at session start if the last successful update is older.
 	UpdateWarnDays int `json:"update_warn_days"`
+
+	// LocalNodeModules gives a workspace with a package.json a VM-local
+	// node_modules (bind-mounted over the shared one): npm needs symlinks,
+	// which shared folders lack, and native modules are Linux builds anyway.
+	// The Windows side then sees an empty node_modules.
+	LocalNodeModules bool `json:"local_node_modules"`
 }
 
 // Defaults returns the default configuration. ShareRoot defaults to C:\dev;
 // the installer asks for it.
 func Defaults() Config {
 	return Config{
-		ShareRoot:      `C:\dev`,
-		VMMountBase:    "/home/fclaude",
-		VMName:         "fclaude",
-		VMUser:         "fclaude",
-		MaintUser:      "maint",
-		MemGiB:         8,
-		VCPU:           6,
-		DiskGiB:        32,
-		UpdateApt:      true,
-		UpdateWarnDays: 15,
+		ShareRoot:        `C:\dev`,
+		VMMountBase:      "/home/fclaude",
+		VMName:           "fclaude",
+		VMUser:           "fclaude",
+		MaintUser:        "maint",
+		MemGiB:           8,
+		VCPU:             6,
+		DiskGiB:          32,
+		UpdateApt:        true,
+		UpdateWarnDays:   15,
+		LocalNodeModules: true,
 	}
 }
 

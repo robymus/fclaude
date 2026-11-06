@@ -94,6 +94,16 @@ func (s *Store) withLock(key string, fn func() error) error {
 	return fn()
 }
 
+// WithLock runs fn while holding a named store-wide lock (e.g. "vm-boot"),
+// separate from every workspace lock. name must not be a workspace key.
+func (s *Store) WithLock(name string, fn func() error) error { return s.withLock(name, fn) }
+
+// Forget drops a workspace's record and every lease on it, live or not,
+// without tearing anything down (the caller has, or the VM is off).
+func (s *Store) Forget(key string) error {
+	return s.withLock(key, func() error { return os.RemoveAll(s.wsDir(key)) })
+}
+
 // reapLocked removes dead holder files and returns the live ones. Lock held.
 func (s *Store) reapLocked(key string) ([]Holder, error) {
 	entries, err := os.ReadDir(s.wsDir(key))

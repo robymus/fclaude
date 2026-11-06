@@ -54,6 +54,11 @@ type Deps struct {
 	// Elevate runs Self with args through UAC and waits.
 	Elevate func(args []string) error
 	AddPath func(dir string) (bool, error)
+	// RemovePath and ScheduleRemoval are uninstall's: drop dir from the user
+	// PATH; delete bin (recursively) and then home (only if empty) right after
+	// this process exits.
+	RemovePath      func(dir string) (bool, error)
+	ScheduleRemoval func(bin, home string) error
 	// Provision waits until the freshly booted VM has finished provisioning and
 	// pins its host key (vmssh.FetchHostKey + WritePin).
 	Provision func(ctx context.Context, info VMInfo) error
@@ -280,6 +285,10 @@ func setupDisk(ctx context.Context, d Deps, in vmw.Install, cfg config.Config) e
 			return fmt.Errorf("%w: refusing to touch the existing disk %s (move it away to start fresh)", ErrAborted, disk)
 		}
 		ui.Info("Keeping the existing disk.")
+		if !fileExists(d.Layout.Key(cfg.VMUser)) {
+			ui.Warn("Its SSH key %s is missing: the VM only accepts the keys it was set up with.", d.Layout.Key(cfg.VMUser))
+			ui.Warn("Restore the ssh folder from the same backup, or setup cannot log in to the VM.")
+		}
 		return nil
 	}
 	ui.Info("Downloading the Ubuntu 24.04 cloud image (about 600 MB, verified against SHA256SUMS)...")
@@ -507,7 +516,8 @@ func finish(d Deps) error {
 	}
 	ui.Info("Done. To use the VM from VS Code, set in settings.json:")
 	ui.Info(`  "claudeCode.claudeProcessWrapper": %q`, wrapper)
-	ui.Info("Next: log in to Claude inside the VM once — run `fclaude --maintenance`, then `claude`.")
+	ui.Info("Next: open a new terminal, cd into a project under your projects folder and run `fclaude`.")
+	ui.Info("Claude asks you to log in the first time.")
 	return nil
 }
 
@@ -518,10 +528,19 @@ func editVSCodeSettings(path, wrapper string, now func() time.Time) error {
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	out, err := SetJSONCString(src, "claudeCode.claudeProcessWrapper", wrapper)
+	out, err := SetJSONCString(src, wrapperSetting, wrapper)
 	if err != nil {
 		return err
 	}
+	return writeWithBackup(path, src, out, now)
+}
+
+// wrapperSetting is the VS Code Claude extension's process-wrapper setting.
+const wrapperSetting = "claudeCode.claudeProcessWrapper"
+
+// writeWithBackup replaces path's content src with out, keeping a timestamped
+// copy of src first. No change, no write.
+func writeWithBackup(path string, src, out []byte, now func() time.Time) error {
 	if bytes.Equal(out, src) {
 		return nil
 	}
@@ -537,4 +556,9 @@ func editVSCodeSettings(path, wrapper string, now func() time.Time) error {
 func fileExists(p string) bool {
 	_, err := os.Stat(p)
 	return err == nil
+}
+
+// WaitStopped waits (up to 3 minutes) until vm is no longer running.
+func WaitStopped(ctx context.Context, vm VM, vmx string) error {
+	return waitStopped(ctx, vm, vmx, time.Now)
 }

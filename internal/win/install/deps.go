@@ -43,10 +43,12 @@ func ProductionDeps(home, version string, ui UI) (Deps, error) {
 			n, err := strconv.Atoi(strings.TrimSpace(out))
 			return err == nil && n >= 3, err
 		},
-		Elevate:   func(args []string) error { return RunElevated(self, args) },
-		AddPath:   AddToUserPath,
-		Provision: WaitProvisioned(l, "fclaude", ui, 30*time.Minute),
-		Now:       time.Now,
+		Elevate:         func(args []string) error { return RunElevated(self, args) },
+		AddPath:         AddToUserPath,
+		RemovePath:      RemoveFromUserPath,
+		ScheduleRemoval: ScheduleRemoval,
+		Provision:       WaitProvisioned(l, "fclaude", ui, 30*time.Minute),
+		Now:             time.Now,
 	}
 	if appData := os.Getenv("APPDATA"); appData != "" && fileExists(filepath.Join(appData, "Code")) {
 		d.VSCodeSettings = filepath.Join(appData, "Code", "User", "settings.json")
@@ -84,5 +86,19 @@ func ElevatedStep(home string, args []string) error {
 	}
 	out, err := PowerShell(script)
 	logf("firewall for %s: err=%v output=%q", *subnets, err, out)
+	return err
+}
+
+// ElevatedUninstallStep is `fclaude uninstall-elevated`: remove the firewall
+// rules (run through UAC by Uninstall).
+func ElevatedUninstallStep(home string) error {
+	if !IsElevated() {
+		return errors.New("uninstall-elevated must run as administrator (uninstall starts it through UAC)")
+	}
+	out, err := PowerShell(FirewallRemoveScript())
+	if f, ferr := os.OpenFile(filepath.Join(home, "elevated.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600); ferr == nil {
+		_, _ = fmt.Fprintf(f, "%s firewall removal: err=%v output=%q\n", time.Now().Format(time.RFC3339), err, out)
+		_ = f.Close()
+	}
 	return err
 }

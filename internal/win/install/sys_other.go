@@ -23,3 +23,6 @@ func AddToUserPath(string) (bool, error) { return false, errWindowsOnly }
 
 // RemoveFromUserPath is Windows-only.
 func RemoveFromUserPath(string) (bool, error) { return false, errWindowsOnly }
+
+// ScheduleRemoval is Windows-only.
+func ScheduleRemoval(string, string) error { return errWindowsOnly }

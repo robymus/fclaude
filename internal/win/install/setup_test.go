@@ -56,19 +56,23 @@ func (u *fakeUI) Confirm(p string, def bool) (bool, error) {
 	return def, nil
 }
 
-type fakeVM struct{ calls []string }
+type fakeVM struct {
+	calls   []string
+	running bool
+}
 
 func (v *fakeVM) Start(context.Context, string) error {
 	v.calls = append(v.calls, "start")
 	return nil
 }
 
-func (v *fakeVM) Stop(context.Context, string, bool) error {
-	v.calls = append(v.calls, "stop")
+func (v *fakeVM) Stop(_ context.Context, _ string, hard bool) error {
+	v.calls = append(v.calls, fmt.Sprintf("stop hard=%v", hard))
+	v.running = false
 	return nil
 }
 
-func (v *fakeVM) Running(context.Context, string) (bool, error) { return false, nil }
+func (v *fakeVM) Running(context.Context, string) (bool, error) { return v.running, nil }
 
 type fakeVdisk struct{ calls [][]string }
 
@@ -161,7 +165,7 @@ func TestSetupFresh(t *testing.T) {
 	if p, _ := v.Get("sata0:1.present"); p != "FALSE" {
 		t.Error("seed not detached after provisioning")
 	}
-	if strings.Join(e.vm.calls, ",") != "start,stop,start" {
+	if strings.Join(e.vm.calls, ",") != "start,stop hard=false,start" {
 		t.Errorf("vm calls %v", e.vm.calls)
 	}
 	if len(e.elevated) != 1 || strings.Join(e.elevated[0], " ") != "install-elevated --subnets 192.168.201.0/24,192.168.146.0/24" {

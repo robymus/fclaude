@@ -73,3 +73,35 @@ func TestSetJSONCStringRejects(t *testing.T) {
 		}
 	}
 }
+
+func TestDeleteJSONCMember(t *testing.T) {
+	for _, tc := range []struct{ name, in, want string }{
+		{"absent", "{\n  \"a\": 1\n}\n", "{\n  \"a\": 1\n}\n"},
+		{"empty file", "", ""},
+		{"middle", "{\n  \"a\": 1,\n  \"k\": \"x\",\n  \"b\": 2\n}\n", "{\n  \"a\": 1,\n  \"b\": 2\n}\n"},
+		{"last", "{\n  \"a\": 1,\n  \"k\": \"x\"\n}\n", "{\n  \"a\": 1\n}\n"},
+		{"last with trailing comma", "{\n  \"a\": 1,\n  \"k\": \"x\",\n}\n", "{\n  \"a\": 1,\n}\n"},
+		{"only", "{\n  \"k\": \"x\"\n}\n", "{\n}\n"},
+		{"crlf + comments kept", "{\r\n  // keep\r\n  \"k\": \"x\",\r\n  \"b\": [1, {\"k\": 2}]\r\n}\r\n", "{\r\n  // keep\r\n  \"b\": [1, {\"k\": 2}]\r\n}\r\n"},
+		{"nested same name untouched", "{\n  \"o\": {\"k\": 1},\n  \"z\": 0\n}\n", "{\n  \"o\": {\"k\": 1},\n  \"z\": 0\n}\n"},
+		{"one line", `{"a": 1, "k": "x", "b": 2}`, `{"a": 1,  "b": 2}`},
+	} {
+		got, err := DeleteJSONCMember([]byte(tc.in), "k")
+		if err != nil || string(got) != tc.want {
+			t.Errorf("%s: got %q err=%v, want %q", tc.name, got, err, tc.want)
+		}
+	}
+	// Round trip with the setter on the real settings fixture.
+	src, err := os.ReadFile("testdata/settings-real.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	set, err := SetJSONCString(src, "claudeCode.claudeProcessWrapper", `C:\x\fclaude-vscode.exe`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	back, err := DeleteJSONCMember(set, "claudeCode.claudeProcessWrapper")
+	if err != nil || string(back) != string(src) {
+		t.Fatalf("set+delete is not identity:\n%s\n---\n%s (err=%v)", back, src, err)
+	}
+}

@@ -52,7 +52,11 @@ func (u *ConsoleUI) readLine() (string, error) {
 
 // Ask prompts for a value; an empty answer takes def.
 func (u *ConsoleUI) Ask(prompt, def string) (string, error) {
-	_, _ = fmt.Fprintf(u.out, "  %s [%s]: ", prompt, def)
+	if def == "" {
+		_, _ = fmt.Fprintf(u.out, "  %s: ", prompt)
+	} else {
+		_, _ = fmt.Fprintf(u.out, "  %s [%s]: ", prompt, def)
+	}
 	s, err := u.readLine()
 	if err != nil {
 		return "", err

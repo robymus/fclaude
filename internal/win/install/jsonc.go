@@ -209,3 +209,69 @@ func splice(src []byte, start, end int, repl []byte) []byte {
 	out = append(out, repl...)
 	return append(out, src[end:]...)
 }
+
+// DeleteJSONCMember removes a top-level member from a JSONC document,
+// preserving everything else byte-for-byte. A member that sits alone on its
+// line(s) takes its line with it. Absent key: src is returned unchanged.
+func DeleteJSONCMember(src []byte, key string) ([]byte, error) {
+	if len(bytes.TrimSpace(src)) == 0 {
+		return src, nil
+	}
+	toks, err := lexJSONC(src)
+	if err != nil {
+		return nil, err
+	}
+	if len(toks) == 0 || toks[0].kind != '{' {
+		return nil, errors.New("settings.json: the top level is not a JSON object")
+	}
+	depth, prevComma := 0, -1 // prevComma: token index of the last depth-1 comma
+	for i := 0; i < len(toks); i++ {
+		t := toks[i]
+		switch t.kind {
+		case '{', '[':
+			depth++
+			continue
+		case '}', ']':
+			depth--
+			continue
+		}
+		if depth != 1 {
+			continue
+		}
+		if t.kind == ',' {
+			prevComma = i
+			continue
+		}
+		if t.kind != 's' || i+1 >= len(toks) || toks[i+1].kind != ':' {
+			continue
+		}
+		_, ve, ok := valueSpan(toks, i+2)
+		if !ok {
+			return nil, fmt.Errorf("settings.json: no value for %q", t.text(src))
+		}
+		j := i + 2 // first token after the value
+		for j < len(toks) && toks[j].start < ve {
+			j++
+		}
+		if t.text(src) != key {
+			i = j - 1 // skip the whole value (nested brackets included)
+			continue
+		}
+		start, end := t.start, ve
+		switch {
+		case j < len(toks) && toks[j].kind == ',':
+			end = toks[j].end // take our trailing comma
+		case prevComma >= 0:
+			start = toks[prevComma].start // last member: take the comma before it
+		}
+		// Whole lines: extend over leading indentation and the line break.
+		ls := bytes.LastIndexByte(src[:start], '\n') + 1
+		if len(bytes.TrimLeft(src[ls:start], " \t")) == 0 {
+			if nl := bytes.IndexByte(src[end:], '\n'); nl >= 0 && len(bytes.TrimSpace(src[end:end+nl])) == 0 {
+				start, end = ls, end+nl+1
+			}
+		}
+		return splice(src, start, end, nil), nil
+	}
+	return src, nil
+}
