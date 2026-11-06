@@ -59,7 +59,7 @@ type Workspace struct {
 	Key     string `json:"key"`
 	WinPath string `json:"win_path"`
 	VMPath  string `json:"vm_path"`
-	Share   string `json:"share"` // VirtualBox shared-folder name
+	Share   string `json:"share"` // VMware shared-folder (HGFS) name
 }
 
 // Key returns the stable key for a cleaned Windows workspace path. NTFS is

@@ -116,11 +116,15 @@ the Windows machine. Each phase ends with a verification step.
       dropped; git config for any non-`kvm` platform); rename `network-config-vbox.tmpl` →
       `network-config-win.tmpl`; seed MTU 1500 for VMware; `seed` platform param instead of the
       hard-coded `virtualbox`; CI ansible syntax-check with `vmware`. **Verify** with a fresh VM.
-- [ ] `internal/win/vmssh`: x/crypto/ssh client, pinned host key, keepalive, stdio session.
-- [ ] `internal/win/share` HGFS impl (or SMB if R2 fails): `addSharedFolder` → guest
-      `vmhgfs-fuse` mount → verify; release = guest `umount` (lazy fallback) → `removeSharedFolder`;
-      self-heal (re-add heals a live mount); rollback; cold-boot `ClearShares`.
-- [ ] **Verify:** windows-latest CI green; manual share/mount/release loop ×50 clean.
+- [x] `internal/win/vmssh`: x/crypto/ssh client, pinned host key (FetchHostKey authenticates first; strict afterwards), bounded dial/handshake, keepalive, stdio Run with cancel. Verified against the real VM.
+- [x] `internal/win/share` HGFS impl: fast path (one ssh check: `vmware-hgfsclient` lists the share +
+      mount source + readable → **66 ms warm**); full path enable → add → guest `vmhgfs-fuse -o fsname=`
+      (without fsname the mount source is just "vmhgfs-fuse", which broke every source check);
+      release = guest `umount` (lazy fallback) → `removeSharedFolder`; self-heal; rollback;
+      optional VM-local `node_modules` bind. Cold-boot `ClearShares` lives in `vmw` (caller: Phase 8).
+- [x] **Verify:** manual share/mount/release loop ×50 clean on the real VM (3.4 s/cycle cold), plus
+      hidden-removal self-heal and node_modules; all 13 packages pass as native Windows exes.
+      **Pending:** windows-latest CI on the next push.
 
 ## Phase 7 — Installer / uninstaller (W)
 
