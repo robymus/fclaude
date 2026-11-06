@@ -3,6 +3,10 @@
 # install Ansible, drop the playbook), then Ansible does everything else.
 hostname: __FCLAUDE_VM_NAME__
 preserve_hostname: false
+# Puts "127.0.1.1 <hostname>" in /etc/hosts. Without it the hostname goes to
+# DNS: VMware's NAT DNS takes 10-15 s to fail an unknown name, and sudo looks
+# its host up on every call.
+manage_etc_hosts: localhost
 
 users:
   - name: __FCLAUDE_VM_USER__
