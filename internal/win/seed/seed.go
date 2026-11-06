@@ -85,9 +85,13 @@ func (p Params) validate() error {
 	return errors.Join(errs...)
 }
 
+// readAsset returns an embedded asset with LF line endings. .gitattributes
+// keeps the repo LF, but a binary built from a checkout that converted them
+// anyway must still emit a seed cloud-init accepts ("#cloud-config\r" is not
+// recognized as cloud-config).
 func readAsset(name string) (string, error) {
 	b, err := fs.ReadFile(vm.Files, name)
-	return string(b), err
+	return strings.ReplaceAll(string(b), "\r\n", "\n"), err
 }
 
 // renderPlaybook injects the weekly-update assets into site.yml as base64,
@@ -103,11 +107,11 @@ func renderPlaybook() (string, error) {
 		"APT_UPGRADE_SERVICE_B64": "update/fclaude-apt-upgrade.service",
 		"APT_UPGRADE_TIMER_B64":   "update/fclaude-apt-upgrade.timer",
 	} {
-		b, err := fs.ReadFile(vm.Files, file)
+		b, err := readAsset(file)
 		if err != nil {
 			return "", err
 		}
-		vars[key] = base64.StdEncoding.EncodeToString(b)
+		vars[key] = base64.StdEncoding.EncodeToString([]byte(b))
 	}
 	out, err := render("ansible/site.yml", site, vars)
 	if err != nil {
@@ -183,6 +187,15 @@ func WriteISO(path string, files map[string][]byte) error {
 	if err != nil {
 		return fmt.Errorf("create %s: %w", path, err)
 	}
+	// On any failure, release the image file (Windows cannot delete an open
+	// file) and remove the partial image.
+	done := false
+	defer func() {
+		if !done {
+			_ = img.Close()
+			_ = os.Remove(path)
+		}
+	}()
 	img.LogicalBlocksize = 2048
 	work, err := os.MkdirTemp("", "fclaude-seed")
 	if err != nil {
@@ -223,5 +236,10 @@ func WriteISO(path string, files map[string][]byte) error {
 	if err := iso.Finalize(iso9660.FinalizeOptions{RockRidge: true, VolumeIdentifier: VolumeLabel}); err != nil {
 		return err
 	}
-	return img.Close()
+	done = true
+	if err := img.Close(); err != nil {
+		_ = os.Remove(path)
+		return err
+	}
+	return nil
 }

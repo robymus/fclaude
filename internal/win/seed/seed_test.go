@@ -153,8 +153,23 @@ func TestWriteISORoundTrip(t *testing.T) {
 }
 
 func TestWriteISORejectsNested(t *testing.T) {
-	err := WriteISO(filepath.Join(t.TempDir(), "x.iso"), map[string][]byte{"a/b": nil})
-	if err == nil {
+	path := filepath.Join(t.TempDir(), "x.iso")
+	if err := WriteISO(path, map[string][]byte{"a/b": nil}); err == nil {
 		t.Fatal("nested name accepted")
+	}
+	// The failed image must be closed and removed (an open handle also makes
+	// the TempDir cleanup fail on Windows).
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("partial image left behind: %v", err)
+	}
+}
+
+func TestReadAssetNormalizesCRLF(t *testing.T) {
+	ud, err := readAsset("cloud-init/user-data.tmpl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(ud, "\r") || !strings.HasPrefix(ud, "#cloud-config\n") {
+		t.Fatal("asset not LF-normalized")
 	}
 }

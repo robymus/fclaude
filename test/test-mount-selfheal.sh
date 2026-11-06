@@ -179,9 +179,9 @@ run_boot() {  # run_boot <domstate>
     export REPO_DIR REC STATE
     # shellcheck disable=SC1090,SC1091
     source "$TMP/stubs.sh"
-    # shellcheck disable=SC2317  # both are called from ensure_vm_running
+    # shellcheck disable=SC2317,SC2329  # both are called from ensure_vm_running
     virsh() { case "${1:-}" in domstate) printf '%s\n' "$BOOT_STATE" ;; *) : ;; esac; }
-    # shellcheck disable=SC2317
+    # shellcheck disable=SC2317,SC2329
     ssh_vm() { return 0; }   # reachable immediately: no wait loop
     BOOT_STATE="$1"
     ensure_vm_running

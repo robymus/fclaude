@@ -1,0 +1,8 @@
+# Everything in this repo is LF. Without this, a Windows checkout with Git's
+# default core.autocrlf=true turns the embedded VM assets (vm/**) into CRLF:
+# a "#cloud-config\r" first line is not recognized by cloud-init, and bash
+# scripts break. Windows CI builds and tests from such a checkout.
+* text=auto eol=lf
+
+# Fixtures that must keep CRLF (they test CRLF parsing).
+*-crlf.txt -text
