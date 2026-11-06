@@ -79,7 +79,9 @@ the Windows machine. Each phase ends with a verification step.
       full load with 6 vCPUs the guest wedges** (RCU stalls, no ssh for 150 s+; reproducible), and one
       intermittent first-boot initramfs livelock. VBox.log: NEM "snail mode", VirtualBox-emulated
       APIC (no x2APIC). The **Windows Hypervisor Platform feature was OFF**; the user is enabling it
-      and rebooting. **Next:** re-run `r1-load.sh` trials (6 vCPU baseline, then paravirt
+      and rebooting. **Pre-reboot trials:** default(kvm) 15/15 ssh misses (wedged); `--paravirt-provider
+      none` 6/15 misses + 2 kernel warnings; **`hyperv` 0/15 misses, max 509 ms** (final dmesg/stress
+      read came back empty, so confirm). **Next:** re-run `r1-load.sh` trials (6 vCPU baseline, then paravirt
       none/hyperv, 4 and 2 vCPUs). The harness is in the session scratchpad; recreate it from the
       PLAN if it's gone. If it's still unstable: candidates are VMware Workstation (Home OK) or Hyper-V
       direct (Pro only; this machine is **Home**). Ask the user for the brother's Windows edition.
