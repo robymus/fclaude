@@ -1,6 +1,6 @@
 # fclaude for Windows (experimental) — PLAN
 
-Status: **Hypervisor switched to VMware Workstation Pro (2026-11-06, §10.6) after VirtualBox failed R1. §3–§4 describe the VMware design; §0.3/§0.7 keep the VirtualBox findings as history.** v3. Linux-side groundwork is implemented on branch `feat/windows`; the next work happens on
+Status: **Hypervisor switched to VMware Workstation Pro (2026-11-06, §10.6) after VirtualBox failed R1. §3–§4 describe the VMware design; §0.3/§0.7 keep the VirtualBox findings as history.** 2026-11-07: installer, uninstaller, CLI and VS Code wrapper (Option A) are implemented and unit-tested. The user's install → use → uninstall spin is next (TODO Phases 7–9 Verify). v3. Linux-side groundwork is implemented on branch `feat/windows`; the next work happens on
 Windows (see §0).** User decisions are in §10. Every decision below has a default. Items marked
 **[R#]** are spikes to run on the Windows machine *before* the code that depends on them. Each one
 has a pass/fail criterion and a fallback, so a failed spike changes a known decision rather than
@@ -630,9 +630,19 @@ Run as a normal user. Only the firewall rules need admin: a single UAC prompt (`
     `settings.json` (JSONC-aware, backup first, only with consent); then offer the Claude login
     (`fclaude --maintenance` → `claude`).
 
-`fclaude.exe uninstall`: typed-phrase confirmation; `vmrun stop`; remove the `.vmx` and the VM
-directory **except the disk**; remove the firewall group, PATH entry and binaries; a separate
-typed `DELETE DISK` prompt at the end. Mirrors `uninstall.sh`.
+`fclaude.exe uninstall`: typed-phrase confirmation (`remove fclaude`); `vmrun stop`; remove the
+`.vmx` and the VM directory **except the disk**; remove the firewall group (UAC
+`uninstall-elevated`), PATH entry, VS Code wrapper setting (consent, backup) and binaries (a
+detached `cmd.exe` deletes `bin\` just after exit); a separate typed `DELETE DISK` prompt at the
+end. Mirrors `uninstall.sh`.
+
+**What a restore needs (implemented 2026-11-07):** besides the disk, the `ssh\` keys (the VM only
+accepts the keys it was provisioned with) and `vm.json` (the MACs its netplan matches). The seed's
+`instance-id` is constant, so cloud-init does not re-run on a restored disk and nothing in the
+VM is reconfigured. Uninstall therefore keeps `ssh\`, `vm.json` and `config.json` with the disk.
+Setup's restore branch reuses them, finds `.provisioned` at once, and warns if the key is
+missing. A disk moved to *another* machine also needs the same VMnet1 subnet (its static IP).
+This is a documented limitation.
 
 `fclaude.exe grow-disk 64G`: confirm, stop the VM, `vmware-vdiskmanager -x`, start, then
 `growpart` + `resize2fs` over ssh.

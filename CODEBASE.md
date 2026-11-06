@@ -120,7 +120,7 @@ gain a `fclaude_platform` (`kvm` | `vmware`) switch.
 |---|---|
 | `go.mod` | Module `github.com/robymus/fclaude` (repo root), Go 1.26. |
 | `.golangci.yml` | golangci-lint v2 config; CI lints for `GOOS=linux` **and** `GOOS=windows`. |
-| `cmd/fclaude-win/` | Single binary; personality from exe name: `fclaude`, `fclaude-vscode`, `fclaude-setup`, `fclaude-capture`. Only `--version`/`--help` and **capture** work so far; the rest exit 2 "not implemented". |
+| `cmd/fclaude-win/` | Single binary; personality from exe name: `fclaude` (→ `cli.Main`), `fclaude-vscode` (→ `cli.VSCodeMain`), `fclaude-setup` (→ `install.Setup` wizard), `fclaude-capture`. `install-elevated` / `uninstall-elevated` are the UAC re-entry points. |
 | `vm/assets.go` | `go:embed` of site.yml, cloud-init templates, `vm/update/*` — Windows provisions from the same files as Linux. |
 | `vm/cloud-init/network-config-win.tmpl` | Two-NIC netplan (NAT dhcp `nat0` + host-only static `host0`), both matched by MAC, hypervisor-neutral. MTU from the host tooling (`seed.MTU` = 1500 for VMware, whose NAT breaks HTTPS below that). |
 | `internal/win/winpath` | Pure-string Windows path semantics (Clean/Rel/WorkspaceRel), identical on Linux CI. Workspaces must be strictly under the share root and not a top-level dot dir. |
@@ -131,9 +131,11 @@ gain a `fclaude_platform` (`kvm` | `vmware`) switch.
 | `internal/win/seed` | Renders user-data/meta-data/network-config (port of install.sh `render`, fails on leftover `__VAR__`), writes a Rock Ridge ISO labelled `cidata` (go-diskfs). |
 | `internal/win/vmssh` | In-process x/crypto/ssh client: pinned host key (`FetchHostKey` authenticates, `WritePin` writes known_hosts; strict afterwards), bounded dial/handshake, keepalive, `Run` (stdio, no PTY, cancel hangs up) / `Output`. Tested against an in-process sshd. |
 | `internal/win/share` | HGFS workspace lifecycle as the `lease` Acquire/Release hooks. `Setup`: fast path = one ssh check (`vmware-hgfsclient` lists the share, mount source matches, readable; 66 ms); else enable → add share → guest `vmhgfs-fuse … -o fsname=.host:/<share>` (fsname makes the mount source checkable), replacing a stale mount; rollback on failure. `Teardown`: guest umount (lazy fallback) → remove share. Optional VM-local `node_modules` bind mount. Guest scripts tested under bash against a fake mount table. |
+| `internal/win/install` | `fclaude-setup` wizard (`Setup`, 11 steps, re-runnable; provisioned install → upgrade binaries only) and `Uninstall` (typed `remove fclaude`; keeps disk + `ssh\` + `vm.json` + `config.json` so setup's restore path brings the VM back; `DELETE DISK` wipes). `Layout` of `%USERPROFILE%\.fclaude`, `vm.json`, ed25519 keys + owner-only ACL, verified image download, firewall PowerShell (group `fclaude`), UAC (`RunElevated`), user PATH, JSONC set/delete for VS Code `settings.json`. All side effects behind `Deps` (fakes in tests). |
+| `internal/win/cli` | `fclaude.exe` (`App`): session = lease → share → `ssh.exe -t` in a kill-on-close job → release (also on console close); `--mount/--status/--cleanup/--update/--maintenance/--shutdown`, `grow-disk`; `EnsureRunning` (ssh fast path; cold boot under a store lock: `ClearShares` + lease `Sweep` + start); reap of ended sessions on every run; staleness warning port. `VSCode`: the extension wrapper (drop argv[1], share cwd + `--add-dir`s, in-process ssh with `Rewriter` both ways, `CLAUDE_CODE_*` env forwarding, helper/`auth` calls unmounted). |
 | `internal/win/capture` | R4 research tool: run a command with argv/env(redacted)/cwd/stdio logged as JSONL. |
 | `internal/win/procjob` | Child dies with us: Job Object KILL_ON_JOB_CLOSE (Windows) / Pdeathsig (Linux). |
-| `internal/win/mcphelper` | Port of `fc_is_mcp_helper`. |
+| `internal/win/mcphelper` | Port of `fc_is_mcp_helper`, plus `auth …` (workspace-agnostic on Windows). |
 | `.github/workflows/release-windows.yml` | Tag `v*-win*` → lint+test gate → `fclaude-setup.exe` + `SHA256SUMS` prerelease. |
 
 ## Runtime state (created on the host by install, never in the repo)

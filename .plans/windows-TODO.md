@@ -128,34 +128,42 @@ the Windows machine. Each phase ends with a verification step.
 
 ## Phase 7 — Installer / uninstaller (W)
 
-- [ ] Interactive setup wizard: steps 0–11 of PLAN §4 (share-root prompt, preflight incl. VMware
-      Workstation ≥ 17.5 + VMnet subnets, dirs, guarded disk w/ SHA256 check + vdiskmanager convert,
-      keys + ACL, seed, `.vmx`, single UAC `install-elevated`, binaries + PATH, config/vm.json,
-      boot+wait w/ progress + host-key pin + seed detach, optional VS Code settings.json edit +
-      login launch).
-- [ ] Upgrade path: newer setup over existing install → binaries only, never VM/disk.
-- [ ] `install-elevated` (firewall rules scoped to both VMnet subnets) + `uninstall` (typed
-      confirm, `vmrun stop`, remove the VM dir except the disk, separate `DELETE DISK`) +
-      `grow-disk` (stop, `vdiskmanager -x`, start, in-VM grow).
-- [ ] Tests: disk guard, config-not-overwritten, uninstall never touches disk without the phrase,
-      JSONC settings.json edit (comments/trailing commas preserved, backup written).
-- [ ] **Verify:** fresh install from zero; re-run install (idempotent); restore-from-existing-disk
-      path; uninstall keeps disk; reinstall onto kept disk.
+- [x] Interactive setup wizard: steps 0–11 of PLAN §4 (`install.Setup`, commit ab4ea87). The login
+      step is the printed hint "run `fclaude` in a project; Claude asks you to log in" (no launch).
+- [x] Upgrade path: newer setup over existing install → binaries only, never VM/disk.
+- [x] `install-elevated` + `uninstall` (`fclaude uninstall`: typed `remove fclaude`, VM stopped,
+      VM dir removed except the disk, firewall group via UAC `uninstall-elevated`, PATH, VS Code
+      setting (JSONC delete, backup), binaries deleted after exit; separate `DELETE DISK`). **Kept
+      with the disk: `ssh\` keys, `vm.json` (MACs), `config.json`** — the disk only accepts its
+      own keys and its netplan matches its MACs (cloud-init does not re-run: same instance-id),
+      so restore = same machine with those kept (PLAN §4). `fclaude grow-disk <GB>` (stop,
+      `vdiskmanager -x`, start, in-VM `growpart` + `resize2fs`).
+- [x] Tests: disk guard, config-not-overwritten, uninstall never touches disk without the phrase
+      (wrong phrase changes nothing; keep-disk → reinstall restores without download/convert),
+      JSONC set + delete (comments/trailing commas preserved, backup written).
+- [ ] **Verify (user's full spin):** fresh install from zero; re-run install (idempotent);
+      uninstall keeps disk; reinstall onto kept disk (restore question → yes).
 
 ## Phase 8 — CLI (W)
 
-- [ ] `fclaude` session (lease → share → `ssh.exe -t` in Job → release), `--dir`, `--no-mount`,
-      `--mount <dir>…`, `--status` (VM state + leases + Claude version + last apt), `--cleanup`,
-      `--update`, `--maintenance`, `--shutdown` (confirm), staleness warning port.
+- [x] `fclaude` session (lease → share → `ssh.exe -t` in Job → release, also on console close),
+      `--dir`, `--no-mount`, `--mount <dir>…`, `--status` (VM state + resources + leases + Claude
+      version + last apt; reaps ended sessions), `--cleanup`, `--update`, `--maintenance`,
+      `--shutdown` (confirm), staleness warning port. Cold boot: `ClearShares` + lease `Sweep`
+      under the store-wide `vm-boot` lock. (`internal/win/cli`)
 - [ ] **Verify:** each flag by hand; two concurrent CLI sessions on one dir; kill the terminal →
       next `--status` reaps.
 
 ## Phase 9 — VS Code wrapper (W)
 
 - [ ] Replay the Phase 5 R4 fixtures through the full wrapper (VM-side claude) → **gate: Option A vs B**.
+      Option A built first (below); the user's spin is the gate.
 - [ ] **R7** cold-boot timeout behaviour (stderr progress / logon autostart if needed).
-- [ ] Option A: `fclaude-vscode.exe` (drop argv[1], argv rewrite incl. `--add-dir=`, MCP-helper + `auth status` bypass, Mapper from `RootSpelling(root, cwd)`, allowlisted `CLAUDE_*` env forwarding, lease/share,
-      in-process ssh with bidirectional `RewriteJSONLine`, stderr error messages, capture mode kept).
+- [x] Option A: `fclaude-vscode.exe` (drop argv[1], `--add-dir` folders shared too (outside the
+      root: dropped with a warning), MCP-helper + `auth` bypass, Mapper from `RootSpelling(root,
+      cwd)`, `CLAUDE_CODE_*`/`CLAUDE_AGENT_SDK_*` env forwarding (path values and `SSE_PORT`
+      excluded), lease/share, in-process ssh with `Rewriter` both ways, stderr error messages,
+      capture mode kept). `partial_json` deltas are not rewritten (R5 decides).
 - [ ] **R5** end-to-end scenario list (chat, @-mention, selection, diff accept/reject, file links,
       second workspace folder (no `/add-dir` in the extension), plan mode, interrupt, close tab).
 - [ ] (Only if B) Remote-SSH docs + `fclaude --mount` hold workflow + `.ssh/config` entry generator.

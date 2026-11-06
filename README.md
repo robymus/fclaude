@@ -8,9 +8,10 @@ session and unmounted afterwards.
 See [.plans/fclaude-PLAN.md](.plans/fclaude-PLAN.md) for the full design and
 [CODEBASE.md](CODEBASE.md) for an implementation map.
 
-> **Windows (experimental, in progress):** a VirtualBox-based port for Windows 10/11 hosts lives on
-> the `feat/windows` branch — design in [.plans/windows-PLAN.md](.plans/windows-PLAN.md), status in
-> [.plans/windows-TODO.md](.plans/windows-TODO.md). Not usable yet.
+> **Windows (experimental, in progress):** a VMware Workstation-based port for Windows 10/11 hosts
+> lives on the `feat/windows` branch. Quick start: [windows/README.md](windows/README.md); design in
+> [.plans/windows-PLAN.md](.plans/windows-PLAN.md), status in
+> [.plans/windows-TODO.md](.plans/windows-TODO.md). Not released yet.
 
 ## Requirements (host)
 
