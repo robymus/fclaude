@@ -185,10 +185,10 @@
         state: present
       when: (fclaude_platform | default('kvm')) == 'vmware'
 
-    # Repos on a Windows host are usually checked out by Git for Windows with
-    # core.autocrlf=true (its default): CRLF in the work tree, LF in the index.
-    # Without the same setting here every text file looks modified to the VM's
-    # git. The shared-folder filesystem also reports stat data that differs
+    # Line endings are kept as they are (core.autocrlf=false): with CRLF
+    # conversion, scripts checked out on the shared folder break when run in
+    # the VM. Setup offers Git for Windows the same setting, so both sides
+    # agree. The shared-folder filesystem also reports stat data that differs
     # from what NTFS-native git recorded in the index, so compare only what both
     # sides agree on. Applies to any Windows host platform (anything but kvm).
     - name: System git config for Windows-hosted repos (Windows host)
@@ -198,7 +198,7 @@
         argv: [git, config, --system, "{{ item.name }}", "{{ item.value }}"]
       changed_when: false
       loop:
-        - { name: core.autocrlf, value: 'true' }
+        - { name: core.autocrlf, value: 'false' }
         - { name: core.checkStat, value: minimal }
         - { name: core.trustctime, value: 'false' }
       when: (fclaude_platform | default('kvm')) != 'kvm'

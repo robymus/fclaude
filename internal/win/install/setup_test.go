@@ -354,3 +354,30 @@ func TestEditVSCodeSettingsNew(t *testing.T) {
 		t.Error("no-op edit made a backup")
 	}
 }
+
+func TestGitLineEndingsOffer(t *testing.T) {
+	for _, tc := range []struct {
+		name, value, answer string
+		installed, wantSet  bool
+		wantAsked           bool
+	}{
+		{"system default true", "true", "y", true, true, true},
+		{"unset", "", "y", true, true, true},
+		{"declined", "true", "n", true, false, true},
+		{"already false", "false", "y", true, false, false},
+		{"no git", "", "y", false, false, false},
+	} {
+		e := newEnv(t)
+		set := false
+		e.d.GitAutoCRLF = func() (string, bool) { return tc.value, tc.installed }
+		e.d.SetGitAutoCRLFFalse = func() error { set = true; return nil }
+		e.ui.answers["core.autocrlf false"] = tc.answer
+		if err := Setup(context.Background(), e.d); err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		asked := strings.Contains(strings.Join(e.ui.asked, "\n"), "core.autocrlf false")
+		if set != tc.wantSet || asked != tc.wantAsked {
+			t.Errorf("%s: set=%v asked=%v, want set=%v asked=%v", tc.name, set, asked, tc.wantSet, tc.wantAsked)
+		}
+	}
+}

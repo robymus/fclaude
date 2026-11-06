@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -49,6 +50,23 @@ func ProductionDeps(home, version string, ui UI) (Deps, error) {
 		ScheduleRemoval: ScheduleRemoval,
 		Provision:       WaitProvisioned(l, "fclaude", ui, 30*time.Minute),
 		Now:             time.Now,
+		GitAutoCRLF: func() (string, bool) {
+			git, err := exec.LookPath("git")
+			if err != nil {
+				return "", false
+			}
+			cmd := exec.Command(git, "config", "--get", "core.autocrlf") //nolint:gosec // G204: git from PATH, fixed arguments
+			cmd.Dir = os.TempDir()                                       // outside any repository: user/system settings only
+			out, _ := cmd.Output()                                       // exit 1 = unset
+			return strings.TrimSpace(string(out)), true
+		},
+		SetGitAutoCRLFFalse: func() error {
+			out, err := exec.Command("git", "config", "--global", "core.autocrlf", "false").CombinedOutput()
+			if err != nil {
+				return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
+			}
+			return nil
+		},
 	}
 	if appData := os.Getenv("APPDATA"); appData != "" && fileExists(filepath.Join(appData, "Code")) {
 		d.VSCodeSettings = filepath.Join(appData, "Code", "User", "settings.json")

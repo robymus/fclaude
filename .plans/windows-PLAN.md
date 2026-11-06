@@ -26,7 +26,7 @@ replaced them (Phase 6).
     `procjob`, `mcphelper`.
   - `vm/assets.go` embeds the provisioning files.
 - VM provisioning: `site.yml` has tasks gated on `fclaude_platform == 'virtualbox'` (load
-  `vboxsf` at boot; system git config `autocrlf=true`, `checkStat=minimal`, `trustctime=false`).
+  `vboxsf` at boot; system git config `autocrlf=true` (now `false`, §3.8), `checkStat=minimal`, `trustctime=false`).
   `user-data.tmpl` passes `-e fclaude_platform=…` (Linux renders `kvm` via `FCLAUDE_PLATFORM` in
   `lib/constants.sh`). The new `network-config-vbox.tmpl` defines two NICs matched by MAC.
 - CI (`.github/workflows/ci.yml`): Go lint for linux and windows, `go test -race`, the Windows
@@ -543,9 +543,12 @@ close. Instead:
 - `fclaude_platform` becomes **`vmware`** (was `virtualbox`; Linux stays `kvm`). Gated on it:
   - ensure `open-vm-tools` is installed (the cloud image ships it; the task makes it explicit) and
     drop the VirtualBox-only `vboxsf` modules-load task;
-  - the system gitconfig for repos created on Windows (`core.autocrlf=true`,
+  - the system gitconfig for repos on the Windows share (`core.autocrlf=false`,
     `core.checkStat=minimal`, `core.trustctime=false`). It now applies to any Windows platform
-    (`fclaude_platform != 'kvm'`).
+    (`fclaude_platform != 'kvm'`). **Line endings are kept as they are** (user decision
+    2026-11-07; was `true` to match Git for Windows' default): converted CRLF scripts fail in
+    the VM. Setup offers `git config --global core.autocrlf false` for Git for Windows, so both
+    sides agree.
 - cloud-init `user-data.tmpl` keeps `-e fclaude_platform=__FCLAUDE_PLATFORM__`. The two-NIC
   `network-config-vbox.tmpl` is hypervisor-neutral (MAC-matched) and is renamed to
   `network-config-win.tmpl`. The KVM `network-config.tmpl` stays byte-identical.

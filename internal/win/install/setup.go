@@ -66,6 +66,11 @@ type Deps struct {
 	// VSCodeSettings is the user settings.json path ("" when VS Code is absent).
 	VSCodeSettings string
 	Now            func() time.Time
+	// GitAutoCRLF returns Git for Windows' effective core.autocrlf outside any
+	// repository ("" when unset); ok is false when git is not installed.
+	// SetGitAutoCRLFFalse sets it to false in the user's global git config.
+	GitAutoCRLF         func() (value string, ok bool)
+	SetGitAutoCRLFFalse func() error
 	// DirExists and MkdirAll handle the projects folder (a Windows path;
 	// replaced in tests that run on Linux). nil means the os package.
 	DirExists func(string) bool
@@ -502,6 +507,9 @@ func waitStopped(ctx context.Context, vm VM, vmx string, now func() time.Time) e
 func finish(d Deps) error {
 	ui, l := d.UI, d.Layout
 	wrapper := filepath.Join(l.Bin(), "fclaude-vscode.exe")
+	if err := offerGitLineEndings(d); err != nil {
+		return err
+	}
 	if d.VSCodeSettings != "" {
 		ui.Info("VS Code: the Claude extension can run inside the VM, with permission prompts")
 		ui.Info("skipped (safe there: the VM is the sandbox, as with `fclaude` in a terminal).")
@@ -525,6 +533,40 @@ func finish(d Deps) error {
 	ui.Info("Next: open a new terminal, cd into a project under your projects folder and run `fclaude`.")
 	ui.Info("Claude asks you to log in the first time.")
 	return nil
+}
+
+// offerGitLineEndings: the VM's git keeps line endings as they are
+// (core.autocrlf=false, site.yml); Git for Windows defaults to converting to
+// CRLF, which breaks scripts run in the VM and makes the two gits disagree
+// about which files changed. Offer the same setting on Windows.
+func offerGitLineEndings(d Deps) error {
+	if d.GitAutoCRLF == nil {
+		return nil
+	}
+	v, ok := d.GitAutoCRLF()
+	if !ok || strings.EqualFold(v, "false") {
+		return nil
+	}
+	ui := d.UI
+	ui.Info("Git for Windows converts line endings to CRLF on checkout (core.autocrlf=%s).", orUnset(v))
+	ui.Info("Scripts converted that way fail when run in the VM, whose git keeps files as they are.")
+	yes, err := ui.Confirm("Make Git for Windows keep line endings as they are too (git config --global core.autocrlf false)?", true)
+	if err != nil || !yes {
+		return err
+	}
+	if err := d.SetGitAutoCRLFFalse(); err != nil {
+		ui.Warn("Could not change the git setting: %v", err)
+		return nil
+	}
+	ui.Info("Done. Repositories already checked out keep their CRLF files until re-checked out.")
+	return nil
+}
+
+func orUnset(v string) string {
+	if v == "" {
+		return "unset (true on most Git for Windows installs)"
+	}
+	return v
 }
 
 type vscodeSetting struct {
