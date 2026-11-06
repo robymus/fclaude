@@ -12,6 +12,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -20,6 +21,7 @@ import (
 	"time"
 
 	"github.com/robymus/fclaude/internal/win/capture"
+	"github.com/robymus/fclaude/internal/win/install"
 )
 
 // version is set at release build time: -ldflags "-X main.version=<tag>".
@@ -63,6 +65,8 @@ func run(argv []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	switch m {
 	case "fclaude-capture":
 		return runCapture(argv, stdin, stdout, stderr)
+	case "fclaude-setup":
+		return runSetup(args, stdin, stdout, stderr)
 	default:
 		_, _ = fmt.Fprintf(stderr, "%s %s: this mode is not implemented yet in the experimental Windows build "+
 			"(see .plans/windows-TODO.md)\n", m, version)
@@ -135,5 +139,41 @@ func runCapture(argv []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			code = 1
 		}
 	}
+	return code
+}
+
+// runSetup is fclaude-setup: the interactive installer, or (internal) the
+// elevated firewall step it starts through UAC.
+func runSetup(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	home, err := fclaudeHome()
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "fclaude-setup: %v\n", err)
+		return 1
+	}
+	if len(args) > 0 && args[0] == "install-elevated" {
+		if err := install.ElevatedStep(home, args[1:]); err != nil {
+			_, _ = fmt.Fprintf(stderr, "fclaude-setup: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+	if len(args) > 0 {
+		_, _ = fmt.Fprintf(stderr, "fclaude-setup: unknown arguments %q (run it without arguments)\n", args)
+		return 2
+	}
+	ui := install.NewConsoleUI(stdin, stdout)
+	_, _ = fmt.Fprintf(stdout, "fclaude setup %s — Claude Code in an isolated VM (experimental Windows build)\n", version)
+	code := 0
+	d, err := install.ProductionDeps(home, version, ui)
+	if err == nil {
+		err = install.Setup(context.Background(), d)
+	}
+	if err != nil {
+		ui.Warn("%v", err)
+		code = 1
+	} else {
+		ui.Info("Setup finished.")
+	}
+	ui.Pause()
 	return code
 }
