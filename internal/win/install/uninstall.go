@@ -55,7 +55,7 @@ func Uninstall(ctx context.Context, d Deps) error {
 			return err
 		}
 	}
-	for _, p := range []string{l.Leases(), l.Downloads(), filepath.Join(l.Home, "elevated.log")} {
+	for _, p := range []string{l.Leases(), l.Downloads()} {
 		if err := os.RemoveAll(p); err != nil {
 			ui.Warn("Could not remove %s: %v", p, err)
 		}
@@ -70,6 +70,11 @@ func Uninstall(ctx context.Context, d Deps) error {
 		} else {
 			ui.Info("Firewall rules removed.")
 		}
+	}
+
+	// After the elevated step, which appends to it.
+	if err := os.Remove(filepath.Join(l.Home, "elevated.log")); err != nil && !errors.Is(err, os.ErrNotExist) {
+		ui.Warn("Could not remove %s: %v", filepath.Join(l.Home, "elevated.log"), err)
 	}
 
 	if changed, err := d.RemovePath(l.Bin()); err != nil {

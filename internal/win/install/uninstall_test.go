@@ -105,6 +105,8 @@ func TestUninstallKeepsDiskThenReinstallRestores(t *testing.T) {
 func TestUninstallDeleteDisk(t *testing.T) {
 	e, _ := installed(t)
 	l := e.d.Layout
+	log := filepath.Join(l.Home, "elevated.log")
+	e.d.Elevate = func([]string) error { return os.WriteFile(log, []byte("x"), 0o600) } // like the real step
 	extra := filepath.Join(l.Home, "captures")
 	_ = os.MkdirAll(extra, 0o700)
 	e.ui.answers["Type 'remove fclaude'"] = UninstallPhrase
@@ -112,7 +114,7 @@ func TestUninstallDeleteDisk(t *testing.T) {
 	if err := Uninstall(context.Background(), e.d); err != nil {
 		t.Fatalf("%v\n%s", err, e.ui.log.String())
 	}
-	for _, p := range []string{l.VMDir(), l.SSHDir(), l.VMInfo(), l.Config()} {
+	for _, p := range []string{l.VMDir(), l.SSHDir(), l.VMInfo(), l.Config(), log} {
 		if fileExists(p) {
 			t.Errorf("%s survived DELETE DISK", p)
 		}
