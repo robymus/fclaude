@@ -18,12 +18,15 @@ func TestMain(m *testing.M) {
 
 func TestMode(t *testing.T) {
 	cases := map[string]string{
-		`C:\Users\x\.fclaude\bin\fclaude-vscode.exe`: "fclaude-vscode",
-		`FCLAUDE-SETUP.EXE`:                          "fclaude-setup",
-		`/usr/local/bin/fclaude-capture`:             "fclaude-capture",
-		`fclaude.exe`:                                "fclaude",
-		`fclaude-setup (1).exe`:                      "fclaude", // browser-renamed download
-		`fclaude-win`:                                "fclaude",
+		`C:\Users\x\.fclaude\bin\fclaude-vscode.exe`:    "fclaude-vscode",
+		`FCLAUDE-SETUP.EXE`:                             "fclaude-setup",
+		`/usr/local/bin/fclaude-capture`:                "fclaude-capture",
+		`fclaude.exe`:                                   "fclaude",
+		`fclaude-setup (1).exe`:                         "fclaude-setup", // browser-renamed download
+		`C:\Users\x\Downloads\fclaude-setup-v0.1.0.exe`: "fclaude-setup",
+		`fclaude-setupx.exe`:                            "fclaude-setup",
+		`fclaude-vscode (1).exe`:                        "fclaude",
+		`fclaude-win`:                                   "fclaude",
 	}
 	for in, want := range cases {
 		if got := mode(in); got != want {
