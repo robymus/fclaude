@@ -532,7 +532,18 @@ close. Instead:
   Windows Defender Firewall rules from the previous design, scoped to `-RemoteAddress` of **both**
   VMnet subnets. Guest traffic to the host's `.1` addresses arrives on these real virtual
   adapters, so the rules apply. Uninstall: `Remove-NetFirewallRule -Group fclaude`.
-- **NAT side-channel: absent.** From the guest, the NAT gateway reaches no host port at all, and
+- **NAT side channel (Phase 10 firewall matrix, 2026-11-07): partly present.** `vmnat.exe` makes
+  the VM's NAT connections *itself*, from this computer. So traffic to the host's **other**
+  addresses (LAN IP, other adapters) arrives from the host's own address, and Windows treats it
+  as loopback: no Windows Firewall rule applies, inbound or outbound (verified with a test
+  listener on TCP 1000/18080, with and without an allow rule). Every host service bound to all
+  addresses is therefore reachable from the VM, any port. Exceptions seen: 135, 139 and 445 time
+  out on that path. The VMware host addresses (`.1` of VMnet1/8) are fine (rules apply, source =
+  VM). **LAN devices** are now blocked: an outbound rule on `vmnat.exe` blocks private ranges
+  except port 53 (router :80 open from Windows, refused from the VM). Closing the own-address hole
+  needs a WFP filter with the loopback flag (`ALE_AUTH_CONNECT`, app = vmnat.exe), which Windows
+  Firewall rules cannot express.
+- **NAT side channel (R1-VMware spike, superseded by the entry above):** From the guest, the NAT gateway reaches no host port at all, and
   host loopback-only services are unreachable from every address (verified). Unlike VirtualBox's
   `localhostReachable`, this is not a setting that can silently flip.
 

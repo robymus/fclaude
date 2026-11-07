@@ -42,7 +42,7 @@ func ProductionDeps(home, version string, ui UI) (Deps, error) {
 				return false, err
 			}
 			n, err := strconv.Atoi(strings.TrimSpace(out))
-			return err == nil && n >= 3, err
+			return err == nil && n >= FirewallRuleCount, err
 		},
 		Elevate:         func(args []string) error { return RunElevated(self, args) },
 		AddPath:         AddToUserPath,

@@ -18,6 +18,8 @@ func TestFirewallScript(t *testing.T) {
 		"-Action Block -Protocol UDP -LocalPort 1-1023",
 		"-Action Allow -Protocol TCP -LocalPort 1024-65535",
 		"-Group 'fclaude'", "$ErrorActionPreference = 'Stop'",
+		`-Direction Outbound -Action Block -Program '%SystemRoot%\System32\vmnat.exe' -Protocol TCP -RemotePort '1-52','54-65535' -RemoteAddress '10.0.0.0/8','172.16.0.0/12','192.168.0.0/16'`,
+		"-Program '%SystemRoot%\\System32\\vmnat.exe' -Protocol UDP -RemotePort '1-52','54-65535'",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("missing %q in\n%s", want, s)
@@ -27,6 +29,9 @@ func TestFirewallScript(t *testing.T) {
 		if _, err := FirewallScript(bad...); err == nil {
 			t.Errorf("%q accepted", bad)
 		}
+	}
+	if n := strings.Count(s, "New-NetFirewallRule"); n != FirewallRuleCount {
+		t.Errorf("%d rules, FirewallRuleCount says %d", n, FirewallRuleCount)
 	}
 	if !strings.Contains(FirewallRemoveScript(), "-Group 'fclaude'") || !strings.Contains(FirewallCheckScript(), ".Count") {
 		t.Error("remove/check scripts")
