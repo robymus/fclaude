@@ -3,6 +3,10 @@
 # install Ansible, drop the playbook), then Ansible does everything else.
 hostname: __FCLAUDE_VM_NAME__
 preserve_hostname: false
+# Puts "127.0.1.1 <hostname>" in /etc/hosts. Without it the hostname goes to
+# DNS: VMware's NAT DNS takes 10-15 s to fail an unknown name, and sudo looks
+# its host up on every call.
+manage_etc_hosts: localhost
 
 users:
   - name: __FCLAUDE_VM_USER__
@@ -41,7 +45,7 @@ write_files:
 
 runcmd:
   # Apply the playbook locally (Ansible runs ON the VM, per requirement).
-  - ['ansible-playbook', '-c', 'local', '-i', 'localhost,', '-e', 'host_user=__USER__', '-e', 'fclaude_update_apt=__FCLAUDE_UPDATE_APT__', '__FCLAUDE_VM_ANSIBLE_DIR__/site.yml']
+  - ['ansible-playbook', '-c', 'local', '-i', 'localhost,', '-e', 'host_user=__USER__', '-e', 'fclaude_update_apt=__FCLAUDE_UPDATE_APT__', '-e', 'fclaude_platform=__FCLAUDE_PLATFORM__', '__FCLAUDE_VM_ANSIBLE_DIR__/site.yml']
   - ['touch', '/var/lib/fclaude/.provisioned']
 
 final_message: "fclaude VM provisioned after $UPTIME seconds"

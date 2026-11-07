@@ -1,0 +1,85 @@
+[
+ {
+  "cwd": "c:\\dev\\r4-scratch",
+  "args": [
+   "--output-format",
+   "stream-json",
+   "--verbose",
+   "--input-format",
+   "stream-json",
+   "--max-thinking-tokens=31999",
+   "--permission-prompt-tool=stdio",
+   "--setting-sources=user,project,local",
+   "--permission-mode=default",
+   "--include-partial-messages",
+   "--debug",
+   "--debug-to-stderr",
+   "--enable-auth-status",
+   "--no-chrome",
+   "--replay-user-messages"
+  ]
+ },
+ {
+  "cwd": "c:\\dev\\r4-scratch",
+  "args": [
+   "--output-format",
+   "stream-json",
+   "--verbose",
+   "--input-format",
+   "stream-json",
+   "--thinking=disabled",
+   "--permission-prompt-tool=stdio",
+   "--setting-sources=user,project,local",
+   "--permission-mode=default",
+   "--include-partial-messages",
+   "--debug",
+   "--debug-to-stderr",
+   "--enable-auth-status",
+   "--no-chrome",
+   "--replay-user-messages"
+  ]
+ },
+ {
+  "cwd": "c:\\dev\\r4-scratch",
+  "args": [
+   "--output-format",
+   "stream-json",
+   "--verbose",
+   "--input-format",
+   "stream-json",
+   "--max-thinking-tokens=31999",
+   "--permission-prompt-tool=stdio",
+   "--resume=3e3c97f7-73eb-4e39-b7bb-375f10207b0e",
+   "--setting-sources=user,project,local",
+   "--permission-mode=default",
+   "--include-partial-messages",
+   "--add-dir=c:\\dev\\r4-extra",
+   "--debug",
+   "--debug-to-stderr",
+   "--enable-auth-status",
+   "--no-chrome",
+   "--replay-user-messages"
+  ]
+ },
+ {
+  "cwd": "c:\\dev\\r4-scratch",
+  "args": [
+   "--output-format",
+   "stream-json",
+   "--verbose",
+   "--input-format",
+   "stream-json",
+   "--thinking=disabled",
+   "--permission-prompt-tool=stdio",
+   "--setting-sources=user,project,local",
+   "--permission-mode=default",
+   "--include-partial-messages",
+   "--add-dir=c:\\dev\\r4-extra",
+   "--debug",
+   "--debug-to-stderr",
+   "--enable-auth-status",
+   "--no-chrome",
+   "--replay-user-messages"
+  ]
+ }
+]

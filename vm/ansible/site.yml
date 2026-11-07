@@ -174,6 +174,35 @@
         - host_user | length > 0
         - host_user != fclaude_user
 
+    # --- VMware Workstation host (experimental Windows tooling) ---
+    # Workspaces arrive as VMware shared folders (HGFS), added to the running
+    # VM by the host and mounted by it with `vmhgfs-fuse` from open-vm-tools.
+    # The Ubuntu cloud image ships open-vm-tools; this makes the dependency
+    # explicit (and covers a minimal image without it).
+    - name: Ensure open-vm-tools (VMware host)
+      ansible.builtin.apt:
+        name: open-vm-tools
+        state: present
+      when: (fclaude_platform | default('kvm')) == 'vmware'
+
+    # Line endings are kept as they are (core.autocrlf=false): with CRLF
+    # conversion, scripts checked out on the shared folder break when run in
+    # the VM. Setup offers Git for Windows the same setting, so both sides
+    # agree. The shared-folder filesystem also reports stat data that differs
+    # from what NTFS-native git recorded in the index, so compare only what both
+    # sides agree on. Applies to any Windows host platform (anything but kvm).
+    - name: System git config for Windows-hosted repos (Windows host)
+      # `git config --system` is itself idempotent; plain command keeps the
+      # playbook free of extra collections (only ansible.posix is required).
+      ansible.builtin.command:
+        argv: [git, config, --system, "{{ item.name }}", "{{ item.value }}"]
+      changed_when: false
+      loop:
+        - { name: core.autocrlf, value: 'false' }
+        - { name: core.checkStat, value: minimal }
+        - { name: core.trustctime, value: 'false' }
+      when: (fclaude_platform | default('kvm')) != 'kvm'
+
     # --- Weekly apt/system-package upgrade (optional; network-speed gated) ---
     # Claude Code updates itself (native auto-updater); this timer keeps apt /
     # Docker / Node current. The script + units are the canonical files under

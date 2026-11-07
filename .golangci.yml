@@ -1,0 +1,43 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard            # errcheck, govet, ineffassign, staticcheck, unused
+  enable:
+    - gosec
+    - revive
+    - misspell
+    - unconvert
+    - errorlint
+    - bodyclose
+    - copyloopvar
+    - nolintlint
+  settings:
+    revive:
+      rules:
+        - name: exported
+        - name: package-comments
+        - name: var-naming
+        - name: indent-error-flow
+        - name: error-strings
+        - name: unused-parameter
+    gosec:
+      excludes:
+        # File paths come from our own config, home directory or fixed system
+        # locations (/proc, the VirtualBox install dir) by design; the tool
+        # runs as the user and is not a privilege boundary.
+        - G304
+        - G703
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters: [gosec, errcheck]
+
+formatters:
+  enable:
+    - gofmt

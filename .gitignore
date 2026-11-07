@@ -5,3 +5,7 @@
 *.swp
 *~
 .DS_Store
+
+# Go build output (Windows tooling)
+/dist/
+*.exe

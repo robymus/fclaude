@@ -133,7 +133,7 @@ if [[ -n "${MODE_MOUNT:-}" ]]; then
   # Release, in reverse order, whatever we managed to mount — including when a
   # mount partway through the list fails.
   declare -a HELD=()
-  # shellcheck disable=SC2317  # invoked indirectly by the EXIT trap below
+  # shellcheck disable=SC2317,SC2329  # invoked indirectly by the EXIT trap below
   release_held() {
     local i
     for ((i = ${#HELD[@]} - 1; i >= 0; i--)); do

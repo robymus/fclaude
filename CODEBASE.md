@@ -109,6 +109,35 @@ only after that address exists.
 | `test-mount-selfheal.sh` | Unit tests for the refcounted mount flow in `common.sh`, against a fake mount table (`mountpoint`/`sudo`/`ssh_vm` stubbed; no VM, sudo or network). Covers cold mount, a second session joining a live share, **the leaked-refcount regression** (counter alive, share gone → warn + re-seat to 1 + re-share), a VM that lost its mount under a live counter, rollback on a failed VM mount, last-holder unmount, and the **cold-boot sweep** (`ensure_vm_running` with `virsh`/`ssh_vm` stubbed: `shut off` clears every counter, `running`/`paused` keep them). `bash test/test-mount-selfheal.sh`; run by CI. |
 | `test-mount-hold.sh` | Unit tests for `fclaude --mount <dir>…` (mount-only hold mode). Runs the real script against a temp config + a stub lib that sources the real `common.sh` and overrides only `ensure_vm_running`/`mount_workspace`/`unmount_workspace`, so path validation is exercised for real. Covers: mount order + reverse-order release on Ctrl+C, repeat/`..` dedup, relative paths, no-dirs error, missing dir and out-of-`$HOME` dir (nothing mounted, VM not started), and release-what-was-held when one mount fails. A watchdog SIGINTs the script once it reports holding (falls back to SIGTERM — same trap — if the suite itself was backgrounded, where POSIX makes async children ignore SIGINT). `bash test/test-mount-hold.sh`; run by CI. |
 
+## Windows host tooling (experimental, Go) — `feat/windows`
+Design and status: [.plans/windows-PLAN.md](.plans/windows-PLAN.md), checklist
+[.plans/windows-TODO.md](.plans/windows-TODO.md). **Hypervisor: VMware Workstation Pro** (switched
+from VirtualBox on 2026-11-06 after it stalled under load on the Hyper-V API). Workspaces shared as per-workspace **HGFS** folders, VS Code wrapper that **rewrites paths** on the stdio JSON stream
+(`C:\dev\app` ⇄ `/home/fclaude/app`). The Linux code paths are unchanged; the shared VM assets
+gain a `fclaude_platform` (`kvm` | `vmware`) switch.
+
+| Path | Role |
+|---|---|
+| `go.mod` | Module `github.com/robymus/fclaude` (repo root), Go 1.26. |
+| `.golangci.yml` | golangci-lint v2 config; CI lints for `GOOS=linux` **and** `GOOS=windows`. |
+| `cmd/fclaude-win/` | Single binary; personality from exe name: `fclaude` (→ `cli.Main`), `fclaude-vscode` (→ `cli.VSCodeMain`), `fclaude-setup` (→ `install.Setup` wizard), `fclaude-capture`. `install-elevated` / `uninstall-elevated` are the UAC re-entry points. |
+| `vm/assets.go` | `go:embed` of site.yml, cloud-init templates, `vm/update/*` — Windows provisions from the same files as Linux. |
+| `vm/cloud-init/network-config-win.tmpl` | Two-NIC netplan (NAT dhcp `nat0` + host-only static `host0`), both matched by MAC, hypervisor-neutral. MTU from the host tooling (`seed.MTU` = 1500 for VMware, whose NAT breaks HTTPS below that). |
+| `internal/win/winpath` | Pure-string Windows path semantics (Clean/Rel/WorkspaceRel), identical on Linux CI. Workspaces must be strictly under the share root and not a top-level dot dir. |
+| `internal/win/config` | `config.json` (defaults overlay, unknown keys rejected, all errors reported at once), `WriteNoClobber` → `.new`. |
+| `internal/win/pathmap` | `Mapper` (whole-path + embedded-in-text, file URIs) and `Rewriter`: byte-preserving JSON scanner, rewrites string *values* only, never file-content fields inside tool inputs (`Policy`); `Args` for argv; `Pipe` for streams. Fuzzed. |
+| `internal/win/lease` | Liveness-based refcount: lease file per holder `<pid>-<starttime>`, per-workspace lock (flock / LockFileEx), `Acquire(setup)`/`Release(teardown)`/`Reap`/`Sweep`/`List`. Replaces Linux EXIT-trap counters (Windows kills the wrapper with TerminateProcess). |
+| `internal/win/vmw` | VMware Workstation front end via `Runner`: `vmrun -T ws` client (start/stop/list, idempotent add/remove shared folders; errors parsed from vmrun's stdout), `Locate` (registry `InstallPath`/`ProductVersion`, ≥ 17.5), VMnet1/VMnet8 subnets from the registry (VM at `.10`), an order-preserving `.vmx` editor that keeps VMware-written keys byte-for-byte (`ClearShares`, `DetachSeed`), `NewVMX` (hardened two-NIC VM, golden file), `vdiskmanager` args, static-range MACs. Fixture: a real Workstation 26 `.vmx`. |
+| `internal/win/seed` | Renders user-data/meta-data/network-config (port of install.sh `render`, fails on leftover `__VAR__`), writes a Rock Ridge ISO labelled `cidata` (go-diskfs). |
+| `internal/win/vmssh` | In-process x/crypto/ssh client: pinned host key (`FetchHostKey` authenticates, `WritePin` writes known_hosts; strict afterwards), bounded dial/handshake, keepalive, `Run` (stdio, no PTY, cancel hangs up) / `Output`. Tested against an in-process sshd. |
+| `internal/win/share` | HGFS workspace lifecycle as the `lease` Acquire/Release hooks. `Setup`: fast path = one ssh check (`vmware-hgfsclient` lists the share, mount source matches, readable; 66 ms); else enable → add share → guest `vmhgfs-fuse … -o fsname=.host:/<share>` (fsname makes the mount source checkable), replacing a stale mount; rollback on failure. `Teardown`: guest umount (lazy fallback) → remove share. Optional VM-local `node_modules` bind mount. Guest scripts tested under bash against a fake mount table. |
+| `internal/win/install` | `fclaude-setup` wizard (`Setup`, 11 steps, re-runnable; provisioned install → upgrade binaries only) and `Uninstall` (typed `remove fclaude`; keeps disk + `ssh\` + `vm.json` + `config.json` so setup's restore path brings the VM back; `DELETE DISK` wipes). `Layout` of `%USERPROFILE%\.fclaude`, `vm.json`, ed25519 keys + owner-only ACL, verified image download, firewall PowerShell (group `fclaude`), UAC (`RunElevated`), user PATH, JSONC set/delete for VS Code `settings.json`. All side effects behind `Deps` (fakes in tests). |
+| `internal/win/cli` | `fclaude.exe` (`App`): session = lease → share → `ssh.exe -t` in a kill-on-close job → release (also on console close); `--mount/--status/--cleanup/--update/--maintenance/--shutdown`, `grow-disk`; `EnsureRunning` (ssh fast path; cold boot under a store lock: `ClearShares` + lease `Sweep` + start); reap of ended sessions on every run; staleness warning port. `VSCode`: the extension wrapper (drop argv[1], share cwd + `--add-dir`s, in-process ssh with `Rewriter` both ways, `CLAUDE_CODE_*` env forwarding, helper/`auth` calls unmounted). |
+| `internal/win/capture` | R4 research tool: run a command with argv/env(redacted)/cwd/stdio logged as JSONL. |
+| `internal/win/procjob` | Child dies with us: Job Object KILL_ON_JOB_CLOSE (Windows) / Pdeathsig (Linux). |
+| `internal/win/mcphelper` | Port of `fc_is_mcp_helper`, plus `auth …` (workspace-agnostic on Windows). |
+| `.github/workflows/release-windows.yml` | Tag `v*-win*` → lint+test gate → `fclaude-setup.exe` + `SHA256SUMS` prerelease. |
+
 ## Runtime state (created on the host by install, never in the repo)
 `~/.fclaude/`: `fclaude-disk` (32G raw ext4 VM disk), `seed.iso`, `config`, `vm` (identity),
 `ssh/` (keypairs), `exports/` (NFSv4 root; session dirs bind-mounted here), `refcounts/`

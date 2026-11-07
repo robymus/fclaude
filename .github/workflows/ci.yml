@@ -52,3 +52,50 @@ jobs:
               -e "s|__APT_UPGRADE_TIMER_B64__|${apt_tmr_b64}|g" \
               vm/ansible/site.yml > "$rendered"
           ansible-playbook --syntax-check -i localhost, "$rendered"
+          # The VMware (Windows host) variant enables extra gated tasks.
+          ansible-playbook --syntax-check -i localhost, -e fclaude_platform=vmware "$rendered"
+
+  # Experimental Windows host tooling (Go): lint for both target OSes, unit
+  # tests with the race detector, and a Windows cross-build.
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Install isoinfo (independent seed-ISO verification)
+        run: sudo apt-get update -qq && sudo apt-get install -y genisoimage
+
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+
+      - name: golangci-lint (linux)
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.15
+
+      - name: golangci-lint (windows)
+        uses: golangci/golangci-lint-action@v9
+        env:
+          GOOS: windows
+        with:
+          version: v2.15
+
+      - name: Unit tests
+        run: go test -race -count=1 ./...
+
+      - name: Windows cross-build
+        run: GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o /dev/null ./cmd/fclaude-win
+
+  # Win32-API code (process liveness, file locks, job objects) runs for real here.
+  go-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Unit tests
+        run: go test -count=1 ./...
