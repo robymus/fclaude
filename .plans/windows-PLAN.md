@@ -755,9 +755,14 @@ Modified (Linux behavior unchanged):
 
 ## 9. Trade-offs and known limitations (experimental)
 
-- **Isolation.** It is still a full VM with its own kernel, so the main property holds. VMware's
-  NAT exposes no host port (R6), and the host-only/NAT host addresses are covered by the firewall
-  rules.
+- **Isolation.** It is still a full VM with its own kernel, so the main property holds. The
+  host-only/NAT host addresses are covered by the firewall rules, and LAN devices are blocked
+  (outbound rule on `vmnat.exe`). **Accepted gap (user decision 2026-11-07):** through VMware's
+  NAT the VM reaches services the host binds to *all* addresses, on any port, via the host's
+  other addresses (LAN IP, other adapters). Windows treats these connections as loopback and no
+  firewall rule filters them (§3.7). Exposure today: none privileged (135/139/445 time out on
+  that path). Closing it would need a WFP filter with the loopback flag, not built. The Linux
+  host has no such gap.
 - **Proprietary dependency.** VMware Workstation is closed source, needs a Broadcom account to
   download, and its free licence is a vendor decision that could change. The `vmw` package is
   the only hypervisor-specific code (plus HGFS in `share`), so a later swap stays contained.

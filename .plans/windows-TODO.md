@@ -171,12 +171,15 @@ the Windows machine. Each phase ends with a verification step.
 
 ## Phase 10 — E2E, docs, wrap-up (W)
 
-- [ ] Firewall matrix from the VM: 135/139/445/3389 on the VMnet1 and VMnet8 host addresses
-      blocked; a ≥1024 test listener reachable; NAT gateway still reaches nothing; internet OK.
+- [x] Firewall matrix from the VM (2026-11-07): 135/139/445/3389/1000 on the VMnet1 and VMnet8
+      host addresses blocked; ≥1024 test listener reachable; NAT gateway reaches nothing; DNS +
+      internet OK. Found: via vmnat.exe the host's *other* addresses are reachable as loopback
+      (no firewall rule applies). LAN devices fixed with an outbound vmnat rule; the
+      own-address gap is accepted and documented (PLAN §3.7, §9, windows/README.md).
 - [ ] VM reboot under live sessions → self-heal; Windows reboot → cold-boot lease sweep.
 - [ ] `windows/README.md` (brother quick start: **VMware Workstation download via Broadcom**, install, login, VS Code setting, known limitations),
       README + CODEBASE Windows sections (CODEBASE section and README pointer exist; keep them current).
 - [x] `.github/workflows/release-windows.yml` written (Phase 2); first exercised by the tag below.
 - [ ] Cut `v0.1.0-win-experimental`; download it on Windows and install from the release asset.
-- [ ] **Verify:** brother-style dry run on a clean user profile: download release → double-click
+- [ ] **Verify (done by the user's brother):** brother-style dry run on a clean user profile: download release → double-click
       setup → VS Code session works, following only `windows/README.md` (incl. SmartScreen note).

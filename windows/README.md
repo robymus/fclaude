@@ -61,6 +61,12 @@ Other commands (`fclaude --help` lists them all):
   VM-local folder, because shared folders cannot hold the symlinks npm creates. On Windows the
   folder looks empty. Turn this off with `"local_node_modules": false` in
   `%USERPROFILE%\.fclaude\config.json`.
+- **Network isolation has one gap.** The VM cannot reach file sharing or other privileged
+  services through its own network, and cannot reach other devices on your LAN. But a program on
+  your PC that listens on *all* network addresses can be reached from the VM via your PC's other
+  addresses (for example its Wi-Fi address). Windows treats those connections as coming from
+  your PC itself, so its firewall does not filter them. If you run a sensitive service on your
+  PC, bind it to `127.0.0.1`.
 - **Symlinks** created in the VM inside a project fail (a shared-folder limit).
 - **A new empty file** created in the VM can show a 1970 date on Windows until it is written to.
 - **Restoring the VM disk** needs the `ssh` folder and `vm.json` from the same installation. A
