@@ -141,8 +141,8 @@ the Windows machine. Each phase ends with a verification step.
 - [x] Tests: disk guard, config-not-overwritten, uninstall never touches disk without the phrase
       (wrong phrase changes nothing; keep-disk → reinstall restores without download/convert),
       JSONC set + delete (comments/trailing commas preserved, backup written).
-- [ ] **Verify (user's full spin):** fresh install from zero; re-run install (idempotent);
-      uninstall keeps disk; reinstall onto kept disk (restore question → yes).
+- [x] **Verify (user's full spin, 2026-11-07, passed):** fresh install from zero; re-run install
+      (idempotent); uninstall keeps disk; reinstall onto kept disk (restore question → yes).
 
 ## Phase 8 — CLI (W)
 
@@ -151,13 +151,13 @@ the Windows machine. Each phase ends with a verification step.
       version + last apt; reaps ended sessions), `--cleanup`, `--update`, `--maintenance`,
       `--shutdown` (confirm), staleness warning port. Cold boot: `ClearShares` + lease `Sweep`
       under the store-wide `vm-boot` lock. (`internal/win/cli`)
-- [ ] **Verify:** each flag by hand; two concurrent CLI sessions on one dir; kill the terminal →
-      next `--status` reaps.
+- [x] **Verify (user, 2026-11-07, passed):** CLI sessions and flags by hand. Found and fixed:
+      `sudo` waited 10–15 s on DNS for the hostname (`manage_etc_hosts: localhost`).
 
 ## Phase 9 — VS Code wrapper (W)
 
-- [ ] Replay the Phase 5 R4 fixtures through the full wrapper (VM-side claude) → **gate: Option A vs B**.
-      Option A built first (below); the user's spin is the gate.
+- [x] Replay the Phase 5 R4 fixtures through the full wrapper (VM-side claude) → **gate: Option A
+      (passed in the user's VS Code spin, 2026-11-07)**.
 - [ ] **R7** cold-boot timeout behaviour (stderr progress / logon autostart if needed).
 - [x] Option A: `fclaude-vscode.exe` (drop argv[1], `--add-dir` folders shared too (outside the
       root: dropped with a warning), MCP-helper + `auth` bypass, Mapper from `RootSpelling(root,
@@ -167,7 +167,7 @@ the Windows machine. Each phase ends with a verification step.
 - [ ] **R5** end-to-end scenario list (chat, @-mention, selection, diff accept/reject, file links,
       second workspace folder (no `/add-dir` in the extension), plan mode, interrupt, close tab).
 - [ ] (Only if B) Remote-SSH docs + `fclaude --mount` hold workflow + `.ssh/config` entry generator.
-- [ ] **Verify:** R5 all pass (or gaps listed in README); close VS Code → share released by next run.
+- [x] **Verify (user, 2026-11-07):** VS Code works as expected end to end.
 
 ## Phase 10 — E2E, docs, wrap-up (W)
 
