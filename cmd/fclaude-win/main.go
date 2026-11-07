@@ -36,9 +36,13 @@ func main() {
 func mode(argv0 string) string {
 	base := strings.ToLower(filepath.Base(strings.ReplaceAll(argv0, `\`, "/")))
 	base = strings.TrimSuffix(base, ".exe")
-	switch base {
-	case "fclaude-vscode", "fclaude-setup", "fclaude-capture":
+	switch {
+	case base == "fclaude-vscode" || base == "fclaude-capture":
 		return base
+	// Browsers save a repeated download as "fclaude-setup (1).exe", and
+	// people rename it (fclaude-setup-v0.1.0.exe): still the installer.
+	case strings.HasPrefix(base, "fclaude-setup"):
+		return "fclaude-setup"
 	default:
 		return "fclaude"
 	}
